@@ -224,36 +224,98 @@ class XCA(nn.Module):
     matrix (Q^T K \\in d_h \\times d_h)
     """
 
-    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.,
+                hdp=None,
+                hdp_num_heads=0,
+                ):
         super().__init__()
+        
+        self.hdp = hdp
+        self.hdp_num_heads = hdp_num_heads
         self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        
+        self.q_num_heads = int(self.num_heads)
+        self.k_num_heads = int(self.num_heads)
+        self.v_num_heads = int(self.num_heads)
+        
+        if self.hdp == 'q':
+            self.q_num_heads = int(self.hdp_num_heads)
+        if self.hdp == 'k':
+            self.k_num_heads = int(self.hdp_num_heads)
+        if self.hdp == 'qk':
+            self.q_num_heads = int(self.hdp_num_heads)
+            self.k_num_heads = int(self.hdp_num_heads)
+        
+        self.total_num_heads = self.q_num_heads + self.k_num_heads + self.v_num_heads
+        self.total_dim = self.total_num_heads * self.head_dim
+        
+        if self.hdp:
+            self.hdp_proj = nn.Linear(self.hdp_num_heads, self.num_heads, bias=False)
+        else:
+            pass
+        
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
-
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        
+        self.qkv = nn.Linear(dim, self.total_dim, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x):
         B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads)
-        qkv = qkv.permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
-
+        # [B N C] -> [B N Ct]
+        qkv = self.qkv(x)
+        
+        # qkv = qkv.reshape(B, N, 3, self.num_heads, C // self.num_heads)
+        # qkv = qkv.permute(2, 0, 3, 1, 4)
+        # q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+        
+        # [B N Ct] -> [B N Ht D]
+        qkv = qkv.reshape(B, N, self.total_num_heads, self.head_dim)
+        # [... N Ht D] -> [... Ht N D]
+        qkv = qkv.transpose(-3, -2)
+        
+        # [... Ht N C] -> [... Hx/H N C]
+        q = qkv[..., 0 : self.q_num_heads, :, :]
+        k = qkv[..., self.q_num_heads : self.q_num_heads + self.k_num_heads, :, :]
+        v = qkv[..., self.q_num_heads + self.k_num_heads : , :, :]
+        
+        # HDP re-projection
+        if self.hdp == 'q':
+            # [... Hx N D] -> [... D N Hx] -> [... D N H] -> [... H N D]
+            q = self.hdp_proj(q.transpose(-3, -1)).transpose(-3, -1)
+        if self.hdp == 'k':
+            # [... Hx N D] -> [... D N Hx] -> [... D N H] -> [... H N D]
+            k = self.hdp_proj(k.transpose(-3, -1)).transpose(-3, -1)
+        
+        # [B H N D] -> [B H D N]
         q = q.transpose(-2, -1)
         k = k.transpose(-2, -1)
         v = v.transpose(-2, -1)
-
+        
         q = torch.nn.functional.normalize(q, dim=-1)
         k = torch.nn.functional.normalize(k, dim=-1)
-
-        attn = (q @ k.transpose(-2, -1)) * self.temperature
+        
+        # [... Hx/H D N] @ [... Hx/H N D] -> [... Hx/H D D]
+        attn = q @ k.transpose(-2, -1)
+        
+        if self.hdp == 'qk':
+            # [... Hx D D] -> [... D D Hx] -> [... D D H] -> [... H D D]
+            attn = self.hdp_proj(attn.transpose(-3, -1)).transpose(-3, -1)
+        
+        # [... H D D]
+        attn = attn * self.temperature
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
-
-        x = (attn @ v).permute(0, 3, 1, 2).reshape(B, N, C)
+        
+        # [... H D D] @ [... H D N] -> [... H D N]
+        x = (attn @ v)
+        # [B H D N] -> [B N H D] -> [B N C]
+        x = x.permute(0, 3, 1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
+        # [B N C]
         return x
 
     @torch.jit.ignore
@@ -264,12 +326,17 @@ class XCA(nn.Module):
 class XCABlock(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0.,
                  attn_drop=0., drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                 num_tokens=196, eta=None):
+                 num_tokens=196, eta=None,
+                 hdp='',
+                 hdp_num_heads=0,
+                 ):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = XCA(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop,
-            proj_drop=drop
+            proj_drop=drop,
+            hdp=hdp,
+            hdp_num_heads=hdp_num_heads,
         )
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -302,7 +369,11 @@ class XCiT(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768,
                  depth=12, num_heads=12, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., norm_layer=None,
-                 cls_attn_layers=2, use_pos=True, patch_proj='linear', eta=None, tokens_norm=False):
+                 cls_attn_layers=2, use_pos=True, patch_proj='linear', eta=None, tokens_norm=False,
+                 hdp='',
+                 hdp_num_heads=0,
+                 name='xcit',
+                 ):
         """
         Args:
             img_size (int, tuple): input image size
@@ -325,6 +396,15 @@ class XCiT(nn.Module):
             tokens_norm: (bool) Whether to normalize all tokens or just the cls_token in the CA
         """
         super().__init__()
+        if hdp in ['q', 'k', 'qk']:
+            self.hdp = hdp
+            assert isinstance(hdp_num_heads, int) and hdp_num_heads > 0
+            self.hdp_num_heads = hdp_num_heads
+            self._config = f'{name}_{img_size}_hdp{self.hdp_num_heads}to{num_heads}{self.hdp}'
+        else:
+            self.hdp = None
+            self.hdp_num_heads = None
+            self._config = f'{name}_{img_size}_h{num_heads}'
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
@@ -342,7 +422,10 @@ class XCiT(nn.Module):
             XCABlock(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias,
                 qk_scale=qk_scale, drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i],
-                norm_layer=norm_layer, num_tokens=num_patches, eta=eta)
+                norm_layer=norm_layer, num_tokens=num_patches, eta=eta,
+                hdp=self.hdp,
+                hdp_num_heads=self.hdp_num_heads
+                )
             for i in range(depth)])
 
         self.cls_attn_blocks = nn.ModuleList([
@@ -411,6 +494,7 @@ class XCiT(nn.Module):
 @register_model
 def xcit_nano_12_p16(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_nano_12_p16',
         patch_size=16, embed_dim=128, depth=12, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1.0, tokens_norm=False, **kwargs)
     model.default_cfg = _cfg()
@@ -420,6 +504,7 @@ def xcit_nano_12_p16(pretrained=False, **kwargs):
 @register_model
 def xcit_tiny_12_p16(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_tiny_12_p16',
         patch_size=16, embed_dim=192, depth=12, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1.0, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -429,6 +514,7 @@ def xcit_tiny_12_p16(pretrained=False, **kwargs):
 @register_model
 def xcit_small_12_p16(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_small_12_p16',
         patch_size=16, embed_dim=384, depth=12, num_heads=8, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1.0, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -438,6 +524,7 @@ def xcit_small_12_p16(pretrained=False, **kwargs):
 @register_model
 def xcit_tiny_24_p16(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_tiny_24_p16',
         patch_size=16, embed_dim=192, depth=24, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1e-5, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -447,6 +534,7 @@ def xcit_tiny_24_p16(pretrained=False, **kwargs):
 @register_model
 def xcit_small_24_p16(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_small_24_p16',
         patch_size=16, embed_dim=384, depth=24, num_heads=8, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1e-5, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -456,6 +544,7 @@ def xcit_small_24_p16(pretrained=False, **kwargs):
 @register_model
 def xcit_medium_24_p16(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_medium_24_p16',
         patch_size=16, embed_dim=512, depth=24, num_heads=8, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1e-5, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -465,6 +554,7 @@ def xcit_medium_24_p16(pretrained=False, **kwargs):
 @register_model
 def xcit_large_24_p16(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_large_24_p16',
         patch_size=16, embed_dim=768, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1e-5, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -475,6 +565,7 @@ def xcit_large_24_p16(pretrained=False, **kwargs):
 @register_model
 def xcit_nano_12_p8(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_nano_12_p8',
         patch_size=8, embed_dim=128, depth=12, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1.0, tokens_norm=False, **kwargs)
     model.default_cfg = _cfg()
@@ -484,6 +575,7 @@ def xcit_nano_12_p8(pretrained=False, **kwargs):
 @register_model
 def xcit_tiny_12_p8(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_tiny_12_p8',
         patch_size=8, embed_dim=192, depth=12, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1.0, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -493,6 +585,7 @@ def xcit_tiny_12_p8(pretrained=False, **kwargs):
 @register_model
 def xcit_small_12_p8(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_small_12_p8',
         patch_size=8, embed_dim=384, depth=12, num_heads=8, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1.0, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -502,6 +595,7 @@ def xcit_small_12_p8(pretrained=False, **kwargs):
 @register_model
 def xcit_tiny_24_p8(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_tiny_24_p8',
         patch_size=8, embed_dim=192, depth=24, num_heads=4, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1e-5, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -511,6 +605,7 @@ def xcit_tiny_24_p8(pretrained=False, **kwargs):
 @register_model
 def xcit_small_24_p8(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_small_24_p8',
         patch_size=8, embed_dim=384, depth=24, num_heads=8, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1e-5, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -520,6 +615,7 @@ def xcit_small_24_p8(pretrained=False, **kwargs):
 @register_model
 def xcit_medium_24_p8(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_medium_24_p8',
         patch_size=8, embed_dim=512, depth=24, num_heads=8, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1e-5, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()
@@ -529,6 +625,7 @@ def xcit_medium_24_p8(pretrained=False, **kwargs):
 @register_model
 def xcit_large_24_p8(pretrained=False, **kwargs):
     model = XCiT(
+        name='xcit_large_24_p8',
         patch_size=8, embed_dim=768, depth=24, num_heads=16, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), eta=1e-5, tokens_norm=True, **kwargs)
     model.default_cfg = _cfg()

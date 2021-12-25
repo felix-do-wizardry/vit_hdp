@@ -30,6 +30,7 @@ import utils
 
 import xcit
 
+import wandb
 
 def get_args_parser():
     parser = argparse.ArgumentParser('XCiT training and evaluation script', add_help=False)
@@ -182,13 +183,14 @@ def get_args_parser():
                                                                    patch projection from. \
                                                                    Can improve stability for very \
                                                                    large models.')
-
+    
+    parser.add_argument('--hdp', default='', type=str, help='type of HDP to use, leave empty means None, otherwise must be `q` or `k` or `qk`')
+    parser.add_argument('--hdp_num_heads', default=0, type=int, help='number of HDP heads')
     return parser
 
 
 def main(args):
     utils.init_distributed_mode(args)
-
     print(args)
 
     device = torch.device(args.device)
@@ -259,9 +261,14 @@ def main(args):
         num_classes=args.nb_classes,
         drop_rate=args.drop,
         drop_path_rate=args.drop_path,
-        drop_block_rate=None
+        drop_block_rate=None,
+        hdp=args.hdp,
+        hdp_num_heads=args.hdp_num_heads,
     )
-
+    
+    wandb.init(project=f'ImageNet_hdp_xcit', entity='fpt-team', config={}, name=model._config)
+    wandb.config.update(args)
+    
     if args.pretrained:
         if args.pretrained.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(
@@ -404,8 +411,10 @@ def main(args):
                     'scaler': loss_scaler.state_dict(),
                     'args': args,
                 }, checkpoint_path)
+        # print('train_stats', type(train_stats), train_stats)
+        wandb.log({'train_loss':train_stats['loss']})
 
-        if (epoch % args.test_freq == 0) or (epoch == args.epochs - 1):
+        if (epoch % args.test_freq == 0) or (epoch == args.epochs - 1) or True:
             test_stats = evaluate(data_loader_val, model, device)
 
             if test_stats["acc1"] >= max_accuracy:
@@ -417,10 +426,11 @@ def main(args):
                     'model_ema': get_state_dict(model_ema),
                     'args': args,
                 }, os.path.join(output_dir, 'best_model.pth'))
-
+            
             print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
             max_accuracy = max(max_accuracy, test_stats["acc1"])
             print(f'Max accuracy: {max_accuracy:.2f}%')
+            wandb.log({'val_acc1':test_stats['acc1'], 'val_acc5':test_stats['acc5'], 'val_loss':test_stats['loss']})
 
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          **{f'test_{k}': v for k, v in test_stats.items()},
@@ -431,6 +441,8 @@ def main(args):
                 with (output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
 
+    wandb.log({'test_acc':max_accuracy})
+    wandb.finish()
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
