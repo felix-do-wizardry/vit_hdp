@@ -186,6 +186,7 @@ def get_args_parser():
     
     parser.add_argument('--hdp', default='', type=str, help='type of HDP to use, leave empty means None, otherwise must be `q` or `k` or `qk`')
     parser.add_argument('--hdp_num_heads', default=0, type=int, help='number of HDP heads')
+    parser.add_argument('--wandb', default=1, type=int, help='whether to use wandb')
     return parser
 
 
@@ -265,9 +266,10 @@ def main(args):
         hdp=args.hdp,
         hdp_num_heads=args.hdp_num_heads,
     )
-    
-    wandb.init(project=f'ImageNet_hdp_xcit', entity='fpt-team', config={}, name=model._config)
-    wandb.config.update(args)
+    print(f'model created: {model._config}')
+    if args.wandb:
+        wandb.init(project=f'ImageNet_hdp_xcit', entity='fpt-team', config={}, name=model._config)
+        wandb.config.update(args)
     
     if args.pretrained:
         if args.pretrained.startswith('https'):
@@ -412,7 +414,9 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
         # print('train_stats', type(train_stats), train_stats)
-        wandb.log({'train_loss':train_stats['loss']})
+        
+        if args.wandb:
+            wandb.log({'train_loss':train_stats['loss']})
 
         if (epoch % args.test_freq == 0) or (epoch == args.epochs - 1) or True:
             test_stats = evaluate(data_loader_val, model, device)
@@ -430,7 +434,8 @@ def main(args):
             print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
             max_accuracy = max(max_accuracy, test_stats["acc1"])
             print(f'Max accuracy: {max_accuracy:.2f}%')
-            wandb.log({'val_acc1':test_stats['acc1'], 'val_acc5':test_stats['acc5'], 'val_loss':test_stats['loss']})
+            if args.wandb:
+                wandb.log({'val_acc1':test_stats['acc1'], 'val_acc5':test_stats['acc5'], 'val_loss':test_stats['loss']})
 
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          **{f'test_{k}': v for k, v in test_stats.items()},
@@ -440,9 +445,10 @@ def main(args):
             if args.output_dir and utils.is_main_process():
                 with (output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
-
-    wandb.log({'test_acc':max_accuracy})
-    wandb.finish()
+    if args.wandb:
+        wandb.log({'test_acc':max_accuracy})
+        wandb.finish()
+    
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
