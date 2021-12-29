@@ -9,7 +9,9 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+import numpy as np
 
+SWIN_DEBUG = 1
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -109,6 +111,9 @@ class WindowAttention(nn.Module):
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
+        
+        if SWIN_DEBUG:
+            print(f'WindowAttention (non-hdp) with num_heads[{self.num_heads}] dim[{self.dim}]')
 
     def forward(self, x, mask=None):
         """
@@ -160,6 +165,209 @@ class WindowAttention(nn.Module):
         return flops
 
 
+class WindowAttention_HDP(nn.Module):
+    r""" Window based multi-head self attention (W-MSA) module with relative position bias.
+    It supports both of shifted and non-shifted window.
+
+    Args:
+        dim (int): Number of input channels.
+        window_size (tuple[int]): The height and width of the window.
+        num_heads (int): Number of attention heads.
+        qkv_bias (bool, optional):  If True, add a learnable bias to query, key, value. Default: True
+        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set
+        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
+        proj_drop (float, optional): Dropout ratio of output. Default: 0.0
+    """
+
+    def __init__(self, dim, window_size, num_heads, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.,
+                 hdp=False,
+                 hdp_ratios=[],
+                 hdp_non_linear=True,
+                 ):
+
+        super().__init__()
+        self.dim = dim
+        self.window_size = window_size  # Wh, Ww
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.head_dim = head_dim
+        self.scale = qk_scale or head_dim ** -0.5
+
+        # define a parameter table of relative position bias
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+
+        # get pair-wise relative position index for each token inside the window
+        coords_h = torch.arange(self.window_size[0])
+        coords_w = torch.arange(self.window_size[1])
+        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+        relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
+        relative_coords[:, :, 1] += self.window_size[1] - 1
+        relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
+        relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+        self.register_buffer("relative_position_index", relative_position_index)
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+        trunc_normal_(self.relative_position_bias_table, std=.02)
+        self.softmax = nn.Softmax(dim=-1)
+        
+        assert hdp in ['q', 'k', 'qk'], f'hdp={hdp} ????'
+        self.hdp = hdp
+        assert isinstance(hdp_ratios, list), '(self-explanatory)'
+        assert len(hdp_ratios) >= 1, '(self-explanatory)'
+        if not hdp_non_linear:
+            assert len(hdp_ratios) == 1, 'if not using `hdp_non_linear`, only 1 layer of hdp projection allowed, for some reason...?'
+        self.hdp_ratios = hdp_ratios
+        
+        self.q_num_heads = int(self.num_heads)
+        self.k_num_heads = int(self.num_heads)
+        self.v_num_heads = int(self.num_heads)
+        
+        self.hdp_layers_num_heads = [int(np.ceil(self.num_heads / v)) for v in self.hdp_ratios]
+        assert all([isinstance(v, int) and v >= 1 for v in self.hdp_layers_num_heads])
+        self.hdp_num_heads = self.hdp_layers_num_heads[0]
+        # assert self.hdp_num_heads >= 1, '(self-explanatory)'
+        self.hdp_proj_bias = bool(hdp_non_linear)
+        
+        if self.hdp == 'q':
+            self.q_num_heads = int(self.hdp_num_heads)
+        if self.hdp == 'k':
+            self.k_num_heads = int(self.hdp_num_heads)
+        if self.hdp == 'qk':
+            self.q_num_heads = int(self.hdp_num_heads)
+            self.k_num_heads = int(self.hdp_num_heads)
+        
+        self.total_num_heads = self.q_num_heads + self.k_num_heads + self.v_num_heads
+        self.total_dim = self.total_num_heads * self.head_dim
+        
+        self.qkv = nn.Linear(dim, self.total_dim, bias=qkv_bias)
+        
+        self.hdp_proj_layers = []
+        hdp_proj_txt_comps = []
+        for i, v in enumerate(self.hdp_layers_num_heads):
+            _layer = nn.Linear(
+                self.hdp_layers_num_heads[i],
+                self.hdp_layers_num_heads[i + 1]
+                    if i < len(self.hdp_layers_num_heads) - 1
+                    else self.num_heads,
+                bias=self.hdp_proj_bias,
+            )
+            self.hdp_proj_layers.append(_layer)
+            hdp_proj_txt_comps.append(f"{self.hdp_layers_num_heads[i]}{'B' if self.hdp_proj_bias else ''}")
+            if i < len(self.hdp_layers_num_heads) - 1:
+                self.hdp_proj_layers.append(nn.ReLU())
+                hdp_proj_txt_comps.append('relu')
+        
+        self.hdp_proj = nn.Sequential(*self.hdp_proj_layers)
+        hdp_proj_txt = '>'.join(hdp_proj_txt_comps)
+        
+        #     nn.Linear(self.n_global_head, self.n_head, bias=True),
+        #     nn.ReLU(),
+        #     nn.Linear(self.n_head, self.n_head, bias=True)
+        # )
+        
+        if SWIN_DEBUG:
+            print(f'WindowAttention_HDP with hdp[{self.hdp}] num_heads[{hdp_proj_txt}] dim[{self.dim}]')
+
+    def forward(self, x, mask=None):
+        """
+        Args:
+            x: input features with shape of (num_windows*B, N, C)
+            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
+        """
+        # print(f'windows_size: {self.window_size}')
+        # print(f'qkv heads: {self.q_num_heads}, {self.k_num_heads}, {self.v_num_heads}')
+        # print(f'final heads: {self.num_heads}')
+        # print(f'x shape: {x.shape}')
+        B_, N, C = x.shape
+        
+        # [B N C] -> [B N C] -> [B N 3 H D] -> [3 B H N D]
+        # qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # [3 B H N D] -> 3[B H N D]
+        # q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        
+        # [B N C] -> [B N Ct]
+        qkv = self.qkv(x)
+        # [B N C] -> [B N Ht D]
+        qkv = qkv.reshape(B_, N, self.total_num_heads, self.head_dim)
+        # [B N Ht D] -> [B Ht N D]
+        qkv = qkv.transpose(-3, -2)
+        # print(f'qkv shape: {qkv.shape}')
+        
+        # [B Ht N D] -> 3[B Hx N D]
+        q = qkv[..., 0 : self.q_num_heads, :, :]
+        k = qkv[..., self.q_num_heads : self.q_num_heads + self.k_num_heads, :, :]
+        v = qkv[..., self.q_num_heads + self.k_num_heads : , :, :]
+        
+        # HDP re-projection, Haxis=-3
+        if self.hdp == 'q':
+            q = q.transpose(-3, -1)
+            q = self.hdp_proj(q)
+            q = q.transpose(-3, -1)
+        if self.hdp == 'k':
+            k = k.transpose(-3, -1)
+            k = self.hdp_proj(k)
+            k = k.transpose(-3, -1)
+        
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))
+        # print(f'q shape: {q.shape}')
+        # print(f'k shape: {k.shape}')
+        # print(f'attn (0) shape: {attn.shape}')
+        
+        # HDP re-projection, Haxis=-3
+        if self.hdp == 'qk':
+            attn = attn.transpose(-3, -1)
+            attn = self.hdp_proj(attn)
+            attn = attn.transpose(-3, -1)
+        
+        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        # print(f'attn shape: {attn.shape}')
+        # print(f'rel_pos shape: {relative_position_bias.shape}')
+        attn = attn + relative_position_bias.unsqueeze(0)
+
+        if mask is not None:
+            nW = mask.shape[0]
+            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(-1, self.num_heads, N, N)
+            attn = self.softmax(attn)
+        else:
+            attn = self.softmax(attn)
+
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        # assert 0
+        return x
+
+    def extra_repr(self) -> str:
+        return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
+
+    def flops(self, N):
+        # raise NotImplementedError('HDP block')
+        # calculate flops for 1 window with token length of N
+        flops = 0
+        # qkv = self.qkv(x)
+        flops += N * self.dim * 3 * self.dim
+        # attn = (q @ k.transpose(-2, -1))
+        flops += self.num_heads * N * (self.dim // self.num_heads) * N
+        #  x = (attn @ v)
+        flops += self.num_heads * N * N * (self.dim // self.num_heads)
+        # x = self.proj(x)
+        flops += N * self.dim * self.dim
+        return flops
+
+
 class SwinTransformerBlock(nn.Module):
     r""" Swin Transformer Block.
 
@@ -181,7 +389,11 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
-                 act_layer=nn.GELU, norm_layer=nn.LayerNorm):
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm,
+                 hdp=False,
+                 hdp_ratios=[],
+                 hdp_non_linear=True,
+                 ):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -196,9 +408,18 @@ class SwinTransformerBlock(nn.Module):
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
         self.norm1 = norm_layer(dim)
-        self.attn = WindowAttention(
-            dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
-            qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
+        if hdp:
+            self.attn = WindowAttention_HDP(
+                dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
+                qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop,
+                hdp=hdp,
+                hdp_ratios=hdp_ratios,
+                hdp_non_linear=hdp_non_linear,
+                )
+        else:
+            self.attn = WindowAttention(
+                dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
+                qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -359,7 +580,11 @@ class BasicLayer(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
+                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
+                 hdp=False,
+                 hdp_ratios=[],
+                 hdp_non_linear=True,
+                 ):
 
         super().__init__()
         self.dim = dim
@@ -376,7 +601,11 @@ class BasicLayer(nn.Module):
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                 norm_layer=norm_layer)
+                                 norm_layer=norm_layer,
+                                 hdp=hdp,
+                                 hdp_ratios=hdp_ratios,
+                                 hdp_non_linear=hdp_non_linear,
+                                 )
             for i in range(depth)])
 
         # patch merging layer
@@ -455,6 +684,7 @@ class PatchEmbed(nn.Module):
         return flops
 
 
+# %%
 class SwinTransformer(nn.Module):
     r""" Swin Transformer
         A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
@@ -531,6 +761,149 @@ class SwinTransformer(nn.Module):
                                norm_layer=norm_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint)
+            self.layers.append(layer)
+
+        self.norm = norm_layer(self.num_features)
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    @torch.jit.ignore
+    def no_weight_decay(self):
+        return {'absolute_pos_embed'}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self):
+        return {'relative_position_bias_table'}
+
+    def forward_features(self, x):
+        x = self.patch_embed(x)
+        if self.ape:
+            x = x + self.absolute_pos_embed
+        x = self.pos_drop(x)
+
+        for layer in self.layers:
+            x = layer(x)
+
+        x = self.norm(x)  # B L C
+        x = self.avgpool(x.transpose(1, 2))  # B C 1
+        x = torch.flatten(x, 1)
+        return x
+
+    def forward(self, x):
+        x = self.forward_features(x)
+        x = self.head(x)
+        return x
+
+    def flops(self):
+        flops = 0
+        flops += self.patch_embed.flops()
+        for i, layer in enumerate(self.layers):
+            flops += layer.flops()
+        flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
+        flops += self.num_features * self.num_classes
+        return flops
+
+
+# %%
+class SwinTransformer_HDP(nn.Module):
+    r""" Swin Transformer
+        A PyTorch impl of : `Swin Transformer: Hierarchical Vision Transformer using Shifted Windows`  -
+          https://arxiv.org/pdf/2103.14030
+
+    Args:
+        img_size (int | tuple(int)): Input image size. Default 224
+        patch_size (int | tuple(int)): Patch size. Default: 4
+        in_chans (int): Number of input image channels. Default: 3
+        num_classes (int): Number of classes for classification head. Default: 1000
+        embed_dim (int): Patch embedding dimension. Default: 96
+        depths (tuple(int)): Depth of each Swin Transformer layer.
+        num_heads (tuple(int)): Number of attention heads in different layers.
+        window_size (int): Window size. Default: 7
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4
+        qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True
+        qk_scale (float): Override default qk scale of head_dim ** -0.5 if set. Default: None
+        drop_rate (float): Dropout rate. Default: 0
+        attn_drop_rate (float): Attention dropout rate. Default: 0
+        drop_path_rate (float): Stochastic depth rate. Default: 0.1
+        norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm.
+        ape (bool): If True, add absolute position embedding to the patch embedding. Default: False
+        patch_norm (bool): If True, add normalization after patch embedding. Default: True
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
+    """
+
+    def __init__(self,
+                hdp,
+                hdp_ratios,
+                hdp_non_linear,
+                
+                img_size=224, patch_size=4, in_chans=3, num_classes=1000,
+                embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
+                window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
+                drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
+                norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
+                use_checkpoint=False,
+                
+                **kwargs,
+                ):
+        super().__init__()
+        
+        self.num_classes = num_classes
+        self.num_layers = len(depths)
+        self.embed_dim = embed_dim
+        self.ape = ape
+        self.patch_norm = patch_norm
+        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
+        self.mlp_ratio = mlp_ratio
+
+        # split image into non-overlapping patches
+        self.patch_embed = PatchEmbed(
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim,
+            norm_layer=norm_layer if self.patch_norm else None)
+        num_patches = self.patch_embed.num_patches
+        patches_resolution = self.patch_embed.patches_resolution
+        self.patches_resolution = patches_resolution
+
+        # absolute position embedding
+        if self.ape:
+            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+            trunc_normal_(self.absolute_pos_embed, std=.02)
+
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        # stochastic depth
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
+
+        # build layers
+        self.layers = nn.ModuleList()
+        for i_layer in range(self.num_layers):
+            layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
+                               input_resolution=(patches_resolution[0] // (2 ** i_layer),
+                                                 patches_resolution[1] // (2 ** i_layer)),
+                               depth=depths[i_layer],
+                               num_heads=num_heads[i_layer],
+                               window_size=window_size,
+                               mlp_ratio=self.mlp_ratio,
+                               qkv_bias=qkv_bias, qk_scale=qk_scale,
+                               drop=drop_rate, attn_drop=attn_drop_rate,
+                               drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                               norm_layer=norm_layer,
+                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                               use_checkpoint=use_checkpoint,
+                               hdp=hdp,
+                               hdp_ratios=hdp_ratios,
+                               hdp_non_linear=hdp_non_linear,
+                               )
             self.layers.append(layer)
 
         self.norm = norm_layer(self.num_features)

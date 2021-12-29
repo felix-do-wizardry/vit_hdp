@@ -27,6 +27,10 @@ from optimizer import build_optimizer
 from logger import create_logger
 from utils import load_checkpoint, load_pretrained, save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor
 
+import wandb
+import warnings
+warnings.filterwarnings('ignore', '.*interpolation*')
+
 try:
     # noinspection PyUnresolvedReferences
     from apex import amp
@@ -68,6 +72,8 @@ def parse_option():
 
     # distributed training
     parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
+    # parser.add_argument("--name", default='temp', type=str, help='name of the experiment')
+    parser.add_argument("--wandb", default=1, type=int, help='whether to use wandb')
 
     args, unparsed = parser.parse_known_args()
 
@@ -76,13 +82,29 @@ def parse_option():
     return args, config
 
 
-def main(config):
+def main(config, args):
+    is_rank0 = dist.get_rank() == 0
+    if is_rank0:
+        print('Found the rank0 process. If this line is not printed, wandb will not work!!')
+    timestamp = time.strftime('%y%m%d_%H%M%S')
+    exp_name = f"{timestamp}_{config.MODEL.NAME}"
+    
+    if is_rank0 and args.wandb:
+        wandb.init(
+            project=f'ImageNet_hdp_swin',
+            entity='fpt-team',
+            config={},
+            name=exp_name,
+        )
+        wandb.config.update(args)
+        logger.info(f"Initiated WandB name[{exp_name}]")
+    
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
-
+    
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config)
     model.cuda()
-    logger.info(str(model))
+    # logger.info(str(model))
 
     optimizer = build_optimizer(config, model)
     if config.AMP_OPT_LEVEL != "O0":
@@ -141,18 +163,40 @@ def main(config):
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
 
-        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
+        _stat = train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
         if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
             save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
-
+        
+        if is_rank0 and args.wandb:
+            wandb_dict = {
+                'train_loss': float(_stat['loss']),
+                'train_mem_gb': float(_stat['vram_gb']),
+            }
+            wandb.log(wandb_dict)
+            logger.info(f'[WandB]: {wandb_dict}')
+        
+        
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         max_accuracy = max(max_accuracy, acc1)
         logger.info(f'Max accuracy: {max_accuracy:.2f}%')
+        
+        if is_rank0 and args.wandb:
+            wandb_dict = {
+                'val_loss': float(loss),
+                'val_acc': float(acc1),
+                'val_acc5': float(acc5),
+            }
+            wandb.log(wandb_dict)
+            logger.info(f'[WandB]: {wandb_dict}')
+        
+        
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logger.info('Training time {}'.format(total_time_str))
+    if is_rank0 and args.wandb:
+        wandb.finish()
 
 
 def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
@@ -234,7 +278,10 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 f'mem {memory_used:.0f}MB')
     epoch_time = time.time() - start
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
-
+    return {
+        'loss': float(loss_meter.avg),
+        'vram_gb': float(memory_used / 1024.),
+    }
 
 @torch.no_grad()
 def validate(config, data_loader, model):
@@ -304,7 +351,7 @@ def throughput(data_loader, model, logger):
 
 
 if __name__ == '__main__':
-    _, config = parse_option()
+    args, config = parse_option()
 
     if config.AMP_OPT_LEVEL != "O0":
         assert amp is not None, "amp not installed!"
@@ -354,4 +401,4 @@ if __name__ == '__main__':
     # print config
     logger.info(config.dump())
 
-    main(config)
+    main(config, args)
