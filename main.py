@@ -32,6 +32,10 @@ import xcit
 
 import wandb
 
+import warnings
+warnings.filterwarnings('ignore', '.*interpolation*')
+
+# %%
 def get_args_parser():
     parser = argparse.ArgumentParser('XCiT training and evaluation script', add_help=False)
     parser.add_argument('--batch-size', default=64, type=int)
@@ -187,6 +191,10 @@ def get_args_parser():
     parser.add_argument('--hdp', default='', type=str, help='type of HDP to use, leave empty means None, otherwise must be `q` or `k` or `qk`')
     parser.add_argument('--hdp_num_heads', default=0, type=int, help='number of HDP heads')
     parser.add_argument('--wandb', default=1, type=int, help='whether to use wandb')
+    parser.add_argument('--limit_train', default=0, type=int, help='limit the training samples')
+    parser.add_argument('--limit_val', default=0, type=int, help='limit the valing samples')
+    # parser.add_argument('--with_timing', default=0, type=int, help='whether to use and print timing')
+    # parser.add_argument('--gpu_name', default='4xA100', type=str, help='note the hardware running the experiment')
     return parser
 
 
@@ -205,6 +213,15 @@ def main(args):
 
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
+    
+    if args.limit_train > 0:
+        print(f'limiting train data count to {args.limit_train}')
+        _indices = list(range(args.limit_train))
+        dataset_train = torch.utils.data.Subset(dataset_train, torch.tensor(_indices))
+    if args.limit_val > 0:
+        print(f'limiting val data count to {args.limit_val}')
+        _indices = list(range(args.limit_val))
+        dataset_val = torch.utils.data.Subset(dataset_val, torch.tensor(_indices))
 
     if True:  # args.distributed:
         num_tasks = utils.get_world_size()
@@ -254,7 +271,7 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
 
-    print(f"Creating model: {args.model}")
+    print(f"Creating model, arch: {args.model}")
 
     model = create_model(
         args.model,
@@ -265,10 +282,21 @@ def main(args):
         drop_block_rate=None,
         hdp=args.hdp,
         hdp_num_heads=args.hdp_num_heads,
+        # with_timing=args.with_timing,
     )
-    print(f'model created: {model._config}')
-    if args.wandb:
-        wandb.init(project=f'ImageNet_hdp_xcit', entity='fpt-team', config={}, name=model._config)
+    if not hasattr(model, '_config'):
+        model._config = args.model
+    print(f'Model created: {model._config}')
+    timestamp = time.strftime('%y%m%d_%H%M%S')
+    n_gpu = utils.get_world_size()
+    # ebs = args.batch_size * n_gpu
+    print(f'running with {n_gpu} GPUs')
+    # exp_name = f'{timestamp}_{model._config}_bs{n_gpu}x{args.batch_size}'
+    exp_name = f'{timestamp}_{model._config}_bs{n_gpu}x{args.batch_size}'
+    args.output_dir = os.path.join(args.output_dir, exp_name)
+    
+    if args.wandb and utils.is_main_process():
+        wandb.init(project=f'ImageNet_hdp_xcit', entity='fpt-team', config={}, name=exp_name)
         wandb.config.update(args)
     
     if args.pretrained:
@@ -399,7 +427,7 @@ def main(args):
             args.clip_grad, model_ema, mixup_fn,
             surgery=args.surgery
         )
-
+        
         lr_scheduler.step(epoch)
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
@@ -415,12 +443,12 @@ def main(args):
                 }, checkpoint_path)
         # print('train_stats', type(train_stats), train_stats)
         
-        if args.wandb:
+        if args.wandb and utils.is_main_process():
             wandb.log({'train_loss':train_stats['loss']})
 
         if (epoch % args.test_freq == 0) or (epoch == args.epochs - 1) or True:
             test_stats = evaluate(data_loader_val, model, device)
-
+            
             if test_stats["acc1"] >= max_accuracy:
                 utils.save_on_master({
                     'model': model_without_ddp.state_dict(),
@@ -434,7 +462,7 @@ def main(args):
             print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
             max_accuracy = max(max_accuracy, test_stats["acc1"])
             print(f'Max accuracy: {max_accuracy:.2f}%')
-            if args.wandb:
+            if args.wandb and utils.is_main_process():
                 wandb.log({'val_acc1':test_stats['acc1'], 'val_acc5':test_stats['acc5'], 'val_loss':test_stats['loss']})
 
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
@@ -445,7 +473,7 @@ def main(args):
             if args.output_dir and utils.is_main_process():
                 with (output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
-    if args.wandb:
+    if args.wandb and utils.is_main_process():
         wandb.log({'test_acc':max_accuracy})
         wandb.finish()
     
