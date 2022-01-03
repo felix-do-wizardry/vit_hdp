@@ -164,8 +164,6 @@ def main(config, args):
         data_loader_train.sampler.set_epoch(epoch)
 
         _stat = train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger)
         
         if is_rank0 and args.wandb:
             wandb_dict = {
@@ -178,8 +176,18 @@ def main(config, args):
         
         acc1, acc5, loss = validate(config, data_loader_val, model)
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
-        max_accuracy = max(max_accuracy, acc1)
+        is_best = acc1 > max_accuracy
+        max_accuracy_new = max(max_accuracy, acc1)
+        max_accuracy = max_accuracy_new
         logger.info(f'Max accuracy: {max_accuracy:.2f}%')
+        
+        # if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        if dist.get_rank() == 0:
+            save_checkpoint(
+                config, epoch, model_without_ddp, max_accuracy, optimizer, lr_scheduler, logger,
+                save_all=False,
+                save_best=is_best,
+            )
         
         if is_rank0 and args.wandb:
             wandb_dict = {

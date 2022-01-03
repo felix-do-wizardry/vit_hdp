@@ -133,7 +133,11 @@ def load_pretrained(config, model, logger):
     torch.cuda.empty_cache()
 
 
-def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler, logger):
+def save_checkpoint(
+            config, epoch, model, max_accuracy, optimizer, lr_scheduler, logger,
+            save_all=True,
+            save_best=False,
+            ):
     save_state = {'model': model.state_dict(),
                   'optimizer': optimizer.state_dict(),
                   'lr_scheduler': lr_scheduler.state_dict(),
@@ -142,11 +146,17 @@ def save_checkpoint(config, epoch, model, max_accuracy, optimizer, lr_scheduler,
                   'config': config}
     if config.AMP_OPT_LEVEL != "O0":
         save_state['amp'] = amp.state_dict()
-
-    save_path = os.path.join(config.OUTPUT, f'ckpt_epoch_{epoch}.pth')
-    logger.info(f"{save_path} saving......")
-    torch.save(save_state, save_path)
-    logger.info(f"{save_path} saved !!!")
+    
+    filenames = []
+    if save_all:
+        filenames.append(f'ckpt_epoch_{epoch}.pth')
+    if save_best:
+        filenames.append(f'ckpt_best.pth')
+    for fn in filenames:
+        save_path = os.path.join(config.OUTPUT, fn)
+        logger.info(f"{save_path} saving......")
+        torch.save(save_state, save_path)
+        logger.info(f"{save_path} saved !!!")
 
 
 def get_grad_norm(parameters, norm_type=2):
