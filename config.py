@@ -244,7 +244,16 @@ def update_config(config, args):
         config.THROUGHPUT_MODE = True
 
     # set local rank for distributed training
-    config.LOCAL_RANK = args.local_rank
+    local_ranks = {
+        'args': args.local_rank,
+        'environ': int(os.environ['LOCAL_RANK']),
+    }
+    local_ranks_txt = [f'{k}[{v}]' for k, v in local_ranks.items()]
+    print(f"\n[DEBUG] local_rank: {local_ranks_txt[0]} {local_ranks_txt[1]} | using {local_ranks_txt[1]}\n")
+    
+    # config.LOCAL_RANK = args.local_rank
+    # config.LOCAL_RANK = local_ranks['args']
+    config.LOCAL_RANK = local_ranks['environ']
 
     # output folder
     config.OUTPUT = os.path.join(config.OUTPUT, config.MODEL.NAME, config.TAG)
