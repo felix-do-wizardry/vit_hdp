@@ -32,21 +32,21 @@
 
 ## II - ABSOLUTE
 
-> lm_test_flops_abs_8_hard_fish_d1024
+> lm_test_flops_abs_2_gfish_d1024
 
-![lm_test_flops_abs_8_hard_fish_d1024](lm_test_flops_abs_8_hard_fish_d1024.png)
+![lm_test_flops_abs_2_gfish_d1024](lm_test_flops_abs_2_gfish_d1024.png)
 
-> lm_train_flops_abs_8_hard_fish_d1024
+> lm_train_flops_abs_2_gfish_d1024
 
-![lm_train_flops_abs_8_hard_fish_d1024](lm_train_flops_abs_8_hard_fish_d1024.png)
+![lm_train_flops_abs_2_gfish_d1024](lm_train_flops_abs_2_gfish_d1024.png)
 
-> lm_test_time_abs_8_hard_fish_d1024
+> lm_test_time_abs_2_gfish_d1024
 
-![lm_test_time_abs_8_hard_fish_d1024](lm_test_time_abs_8_hard_fish_d1024.png)
+![lm_test_time_abs_2_gfish_d1024](lm_test_time_abs_2_gfish_d1024.png)
 
-> lm_train_time_abs_8_hard_fish_d1024
+> lm_train_time_abs_2_gfish_d1024
 
-![lm_train_time_abs_8_hard_fish_d1024](lm_train_time_abs_8_hard_fish_d1024.png)
+![lm_train_time_abs_2_gfish_d1024](lm_train_time_abs_2_gfish_d1024.png)
 
 > lm_params_abs
 
@@ -59,3 +59,37 @@
 > lm_train_memory_abs
 
 ![lm_train_memory_abs](lm_train_memory_abs.png)
+
+## III - RATIO PER HEAD
+
+> lm_test_flops_head_ratio
+
+![lm_test_flops_head_ratio](lm_test_flops_head_ratio.png)
+
+> lm_train_flops_head_ratio
+
+![lm_train_flops_head_ratio](lm_train_flops_head_ratio.png)
+
+> lm_test_time_head_ratio
+
+![lm_test_time_head_ratio](lm_test_time_head_ratio.png)
+
+> lm_train_time_head_ratio
+
+![lm_train_time_head_ratio](lm_train_time_head_ratio.png)
+
+> lm_test_memory_head_ratio
+
+![lm_test_memory_head_ratio](lm_test_memory_head_ratio.png)
+
+> lm_train_memory_head_ratio
+
+![lm_train_memory_head_ratio](lm_train_memory_head_ratio.png)
+
+> lm_params_head_ratio
+
+![lm_params_head_ratio](lm_params_head_ratio.png)
+
+> lm_non_embed_params_head_ratio
+
+![lm_non_embed_params_head_ratio](lm_non_embed_params_head_ratio.png)
