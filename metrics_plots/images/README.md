@@ -12,6 +12,10 @@
 
 ![lm_test_time_ratio_2_gfish](lm_test_time_ratio_2_gfish.png)
 
+> lm_train_time_ratio_2_gfish
+
+![lm_train_time_ratio_2_gfish](lm_train_time_ratio_2_gfish.png)
+
 > lm_params_ratio_2_gfish
 
 ![lm_params_ratio_2_gfish](lm_params_ratio_2_gfish.png)
