@@ -1,8 +1,12 @@
 ## Model Metrics Plot for LM task
 
-> lm_flops_ratio_2_gfish
+> lm_flops_ratio_2_gfish_test
 
-![lm_flops_ratio_2_gfish](lm_flops_ratio_2_gfish.png)
+![lm_flops_ratio_2_gfish_test](lm_flops_ratio_2_gfish_test.png)
+
+> lm_flops_ratio_2_gfish_train
+
+![lm_flops_ratio_2_gfish_train](lm_flops_ratio_2_gfish_train.png)
 
 > lm_test_time_ratio_2_gfish
 
