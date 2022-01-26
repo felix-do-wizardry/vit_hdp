@@ -2,3 +2,4 @@ __pycache__/*
 wandb/*
 */__pycache__/*
 output/*
+temp.html

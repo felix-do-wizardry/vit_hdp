@@ -49,6 +49,7 @@ def build_model(config):
                                     hdp=config.MODEL.HDP.HDP,
                                     hdp_ratios=config.MODEL.HDP.HDP_RATIOS,
                                     hdp_non_linear=config.MODEL.HDP.NON_LINEAR,
+                                    hdp_stages=config.MODEL.HDP.STAGES,
                                     
                                     )
         else:

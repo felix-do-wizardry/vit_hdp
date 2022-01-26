@@ -28,6 +28,7 @@ from logger import create_logger
 from utils import load_checkpoint, load_pretrained, save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor
 
 import wandb
+import fvcore
 import warnings
 warnings.filterwarnings('ignore', '.*interpolation*')
 
@@ -74,6 +75,8 @@ def parse_option():
     parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
     # parser.add_argument("--name", default='temp', type=str, help='name of the experiment')
     parser.add_argument("--wandb", default=1, type=int, help='whether to use wandb')
+    parser.add_argument("--flops_only", default=0, type=int, help='whether to calc flops and exit after')
+    parser.add_argument("--params_only", default=0, type=int, help='whether to calc params and exit after')
 
     args, unparsed = parser.parse_known_args()
 
@@ -84,8 +87,8 @@ def parse_option():
 
 def main(config, args):
     is_rank0 = dist.get_rank() == 0
-    if is_rank0:
-        print('Found the rank0 process. If this line is not printed, wandb will not work!!')
+    # if is_rank0:
+    #     print('Found the rank0 process. If this line is not printed, wandb will not work!!')
     timestamp = time.strftime('%y%m%d_%H%M%S')
     exp_name = f"{timestamp}_{config.MODEL.NAME}"
     
@@ -105,7 +108,7 @@ def main(config, args):
     model = build_model(config)
     model.cuda()
     # logger.info(str(model))
-
+    
     optimizer = build_optimizer(config, model)
     if config.AMP_OPT_LEVEL != "O0":
         model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
@@ -117,7 +120,33 @@ def main(config, args):
     if hasattr(model_without_ddp, 'flops'):
         flops = model_without_ddp.flops()
         logger.info(f"number of GFLOPs: {flops / 1e9}")
-
+    
+    
+    if args.flops_only:
+        from fvcore.nn import FlopCountAnalysis
+        _img_size = config.DATA.IMG_SIZE
+        _input = torch.tensor(
+            np.random.sample([1, 3, _img_size, _img_size]),
+            dtype=torch.float32,
+            device='cuda',
+        )
+        flops = FlopCountAnalysis(model, _input)
+        logger.info(f'fvcore GFLOPS: {flops.total() / 1e9}')
+        assert 0, '[DEBUG] flops'
+    
+    # fvcore.nn.flop_count_table(
+    #     flops: fvcore.nn.flop_count.FlopCountAnalysis,
+    #     max_depth: int = 3,
+    #     activations: Optional[fvcore.nn.activation_count.ActivationCountAnalysis] = None,
+    #     show_param_shapes: bool = True
+    # )
+    
+    if args.params_only:
+        pc = model_without_ddp.count_params()
+        pc
+        logger.info(f"params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
+        assert 0, '[DEBUG] params'
+    
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
     if config.AUG.MIXUP > 0.:
@@ -198,8 +227,7 @@ def main(config, args):
             wandb.log(wandb_dict)
             logger.info(f'[WandB]: {wandb_dict}')
         
-        
-
+    
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logger.info('Training time {}'.format(total_time_str))

@@ -287,11 +287,6 @@ class WindowAttention_HDP(nn.Module):
         # print(f'x shape: {x.shape}')
         B_, N, C = x.shape
         
-        # [B N C] -> [B N C] -> [B N 3 H D] -> [3 B H N D]
-        # qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        # [3 B H N D] -> 3[B H N D]
-        # q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-        
         # [B N C] -> [B N Ct]
         qkv = self.qkv(x)
         # [B N C] -> [B N Ht D]
@@ -317,9 +312,6 @@ class WindowAttention_HDP(nn.Module):
         
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
-        # print(f'q shape: {q.shape}')
-        # print(f'k shape: {k.shape}')
-        # print(f'attn (0) shape: {attn.shape}')
         
         # HDP re-projection, Haxis=-3
         if self.hdp == 'qk':
@@ -330,8 +322,6 @@ class WindowAttention_HDP(nn.Module):
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        # print(f'attn shape: {attn.shape}')
-        # print(f'rel_pos shape: {relative_position_bias.shape}')
         attn = attn + relative_position_bias.unsqueeze(0)
 
         if mask is not None:
@@ -354,17 +344,40 @@ class WindowAttention_HDP(nn.Module):
         return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
 
     def flops(self, N):
-        # raise NotImplementedError('HDP block')
+        # TODO: add flops calculation to WindowAttention_HDP
         # calculate flops for 1 window with token length of N
         flops = 0
-        # qkv = self.qkv(x)
-        flops += N * self.dim * 3 * self.dim
-        # attn = (q @ k.transpose(-2, -1))
-        flops += self.num_heads * N * (self.dim // self.num_heads) * N
-        #  x = (attn @ v)
+        
+        # # qkv = self.qkv(x)
+        # flops += N * self.dim * 3 * self.dim
+        # # attn = (q @ k.transpose(-2, -1))
+        # flops += self.num_heads * N * (self.dim // self.num_heads) * N
+        # #  x = (attn @ v)
+        # flops += self.num_heads * N * N * (self.dim // self.num_heads)
+        # # x = self.proj(x)
+        # flops += N * self.dim * self.dim
+        
+        linears = len(self.hdp_ratios)
+        r0 = 1 / self.hdp_ratios[0]
+        rt = sum([
+            1 / self.hdp_ratios[i] / (self.hdp_ratios[i + 1] if i < linears - 1 else 1.)
+            for i in range(linears)
+        ])
+        # qkv
+        flops += N * self.dim * self.dim * (1 + r0)
+        # av
         flops += self.num_heads * N * N * (self.dim // self.num_heads)
         # x = self.proj(x)
         flops += N * self.dim * self.dim
+        
+        # attn + hdp_proj
+        if self.hdp == 'qk':
+            flops += self.num_heads * N * (self.dim // self.num_heads) * N * r0
+            flops += self.num_heads * self.num_heads * N * N * rt
+        else:
+            flops += self.num_heads * N * (self.dim // self.num_heads) * N
+            flops += self.num_heads * self.num_heads * self.dim * N * rt
+        
         return flops
 
 
@@ -768,6 +781,10 @@ class SwinTransformer(nn.Module):
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self._init_weights)
+        
+        if SWIN_DEBUG:
+            pc = self.count_params()
+            print(f"[MODEL] params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -813,7 +830,25 @@ class SwinTransformer(nn.Module):
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
-
+    
+    def count_params(self):
+        layers = self.layers
+        blocks = [_block for _layer in layers for _block in _layer.blocks]
+        attns = [_block.attn for _block in blocks]
+        rel_pos_tensors = [_attn.relative_position_bias_table for _attn in attns]
+        
+        embed_tensors = [*rel_pos_tensors]
+        if self.ape:
+            embed_tensors.append(rel_pos_tensors)
+        
+        all_params = [p for p in self.parameters() if p.requires_grad]
+        non_embed_params = [p for p in all_params if all([p is not p1 for p1 in embed_tensors])]
+        
+        pc = {
+            'total': sum([p.numel() for p in all_params]),
+            'non_embed': sum([p.numel() for p in non_embed_params]),
+        }
+        return pc
 
 # %%
 class SwinTransformer_HDP(nn.Module):
@@ -846,6 +881,7 @@ class SwinTransformer_HDP(nn.Module):
                 hdp,
                 hdp_ratios,
                 hdp_non_linear,
+                hdp_stages=None,
                 
                 img_size=224, patch_size=4, in_chans=3, num_classes=1000,
                 embed_dim=96, depths=[2, 2, 6, 2], num_heads=[3, 6, 12, 24],
@@ -857,6 +893,7 @@ class SwinTransformer_HDP(nn.Module):
                 **kwargs,
                 ):
         super().__init__()
+        print(f'creating SWIN_HDP {hdp=} {hdp_ratios=} {hdp_non_linear=} {hdp_stages=}')
         
         self.num_classes = num_classes
         self.num_layers = len(depths)
@@ -883,10 +920,18 @@ class SwinTransformer_HDP(nn.Module):
 
         # stochastic depth
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
-
+        
+        _hdp_stages = list(range(self.num_layers))
+        if hdp_stages is not None:
+            _hdp_stages = list(hdp_stages)
         # build layers
         self.layers = nn.ModuleList()
         for i_layer in range(self.num_layers):
+            hdp_layer_kwards = dict(
+                hdp=hdp,
+                hdp_ratios=hdp_ratios,
+                hdp_non_linear=hdp_non_linear,
+            )
             layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
                                input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                  patches_resolution[1] // (2 ** i_layer)),
@@ -900,9 +945,7 @@ class SwinTransformer_HDP(nn.Module):
                                norm_layer=norm_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
                                use_checkpoint=use_checkpoint,
-                               hdp=hdp,
-                               hdp_ratios=hdp_ratios,
-                               hdp_non_linear=hdp_non_linear,
+                               **(hdp_layer_kwards if i_layer in hdp_stages else {}),
                                )
             self.layers.append(layer)
 
@@ -911,6 +954,10 @@ class SwinTransformer_HDP(nn.Module):
         self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self._init_weights)
+        
+        if SWIN_DEBUG:
+            pc = self.count_params()
+            print(f"[MODEL] params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -956,3 +1003,22 @@ class SwinTransformer_HDP(nn.Module):
         flops += self.num_features * self.patches_resolution[0] * self.patches_resolution[1] // (2 ** self.num_layers)
         flops += self.num_features * self.num_classes
         return flops
+    
+    def count_params(self):
+        layers = self.layers
+        blocks = [_block for _layer in layers for _block in _layer.blocks]
+        attns = [_block.attn for _block in blocks]
+        rel_pos_tensors = [_attn.relative_position_bias_table for _attn in attns]
+        
+        embed_tensors = [*rel_pos_tensors]
+        if self.ape:
+            embed_tensors.append(rel_pos_tensors)
+        
+        all_params = [p for p in self.parameters() if p.requires_grad]
+        non_embed_params = [p for p in all_params if all([p is not p1 for p1 in embed_tensors])]
+        
+        pc = {
+            'total': sum([p.numel() for p in all_params]),
+            'non_embed': sum([p.numel() for p in non_embed_params]),
+        }
+        return pc

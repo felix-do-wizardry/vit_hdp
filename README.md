@@ -44,7 +44,7 @@ python -m torch.distributed.launch --nproc_per_node=4 --use_env  --master_port 1
 
 
 add `--amp-opt-level O0` to disable mixed-precision training
-> single gpu: swin_tiny_patch4_window7_224 | non-hdp
+> single A: swin_tiny_patch4_window7_224 | non-hdp
 ```
 python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1234 \
     main.py --local_rank 0 \
@@ -55,8 +55,18 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1
 
 ```
 
+> single B: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear, ONLY last 2 stages
+```
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1234 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_s23_nonlinear.yaml \
+    --batch-size 128 --amp-opt-level O0 \
+    --wandb 1 \
 
-> single gpu: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear
+```
+
+> single C: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear
 ```
 python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1234 \
     main.py --local_rank 0 \
@@ -68,13 +78,34 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1
 ```
 
 
+
+
+
 > quick test - 3090
 ```
 python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1233 \
     main.py --local_rank 0 \
     --data-path /host/ubuntu/data/imagenet2012 \
     --cfg configs/swin_tiny_patch4_window7_224.yaml \
-    --batch-size 4 --amp-opt-level O0 \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 \
+
+```
+```
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1233 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_nonlinear.yaml \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 \
+
+```
+```
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1233 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_s23_nonlinear.yaml \
+    --batch-size 2 --amp-opt-level O0 \
     --wandb 0 \
 
 ```
@@ -87,5 +118,67 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1
     --cfg configs/swin_tiny_patch4_window7_224.yaml \
     --batch-size 4 --amp-opt-level O0 \
     --wandb 0 \
+
+```
+
+## FLOPS
+
+``` bash
+# > single A: swin_tiny_patch4_window7_224 | non-hdp
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1236 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224.yaml \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 --flops_only 1 \
+
+
+# > single B: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear, ONLY last 2 stages
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1236 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_s23_nonlinear.yaml \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 --flops_only 1 \
+
+
+# > single C: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1236 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_nonlinear.yaml \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 --flops_only 1 \
+
+```
+
+## PARAMS (non-embed)
+
+``` bash
+# > single A: swin_tiny_patch4_window7_224 | non-hdp
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1236 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224.yaml \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 --params_only 1 \
+
+
+# > single B: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear, ONLY last 2 stages
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1236 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_s23_nonlinear.yaml \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 --params_only 1 \
+
+
+# > single C: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1236 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_nonlinear.yaml \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 --params_only 1 \
 
 ```
