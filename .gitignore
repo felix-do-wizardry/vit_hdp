@@ -3,3 +3,5 @@ wandb/*
 */__pycache__/*
 output/*
 temp.html
+metrics_plots/configs/*
+metrics_plots/swin_metrics/*
