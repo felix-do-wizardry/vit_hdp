@@ -62,34 +62,34 @@
 
 ## III - RATIO PER HEAD
 
-> lm_test_flops_head_ratio
+> lm_test_flops_head_ratio_hard_fish
 
-![lm_test_flops_head_ratio](lm_test_flops_head_ratio.png)
+![lm_test_flops_head_ratio_hard_fish](lm_test_flops_head_ratio_hard_fish.png)
 
-> lm_train_flops_head_ratio
+> lm_train_flops_head_ratio_hard_fish
 
-![lm_train_flops_head_ratio](lm_train_flops_head_ratio.png)
+![lm_train_flops_head_ratio_hard_fish](lm_train_flops_head_ratio_hard_fish.png)
 
-> lm_test_time_head_ratio
+> lm_test_time_head_ratio_hard_fish
 
-![lm_test_time_head_ratio](lm_test_time_head_ratio.png)
+![lm_test_time_head_ratio_hard_fish](lm_test_time_head_ratio_hard_fish.png)
 
-> lm_train_time_head_ratio
+> lm_train_time_head_ratio_hard_fish
 
-![lm_train_time_head_ratio](lm_train_time_head_ratio.png)
+![lm_train_time_head_ratio_hard_fish](lm_train_time_head_ratio_hard_fish.png)
 
-> lm_test_memory_head_ratio
+> lm_params_head_ratio_hard_fish
 
-![lm_test_memory_head_ratio](lm_test_memory_head_ratio.png)
+![lm_params_head_ratio_hard_fish](lm_params_head_ratio_hard_fish.png)
 
-> lm_train_memory_head_ratio
+> lm_non_embed_params_head_ratio_hard_fish
 
-![lm_train_memory_head_ratio](lm_train_memory_head_ratio.png)
+![lm_non_embed_params_head_ratio_hard_fish](lm_non_embed_params_head_ratio_hard_fish.png)
 
-> lm_params_head_ratio
+> lm_test_memory_head_ratio_l1024_hard_fish
 
-![lm_params_head_ratio](lm_params_head_ratio.png)
+![lm_test_memory_head_ratio_l1024_hard_fish](lm_test_memory_head_ratio_l1024_hard_fish.png)
 
-> lm_non_embed_params_head_ratio
+> lm_train_memory_head_ratio_l1024_hard_fish
 
-![lm_non_embed_params_head_ratio](lm_non_embed_params_head_ratio.png)
+![lm_train_memory_head_ratio_l1024_hard_fish](lm_train_memory_head_ratio_l1024_hard_fish.png)
