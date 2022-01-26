@@ -5,3 +5,4 @@ output/*
 temp.html
 metrics_plots/configs/*
 metrics_plots/swin_metrics/*
+metrics_plots/images_backup/*

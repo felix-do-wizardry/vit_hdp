@@ -32,21 +32,21 @@
 
 ## II - ABSOLUTE
 
-> lm_test_flops_abs_2_gfish_d1024
+> lm_test_flops_abs_8_hard_fish_d1024
 
-![lm_test_flops_abs_2_gfish_d1024](lm_test_flops_abs_2_gfish_d1024.png)
+![lm_test_flops_abs_8_hard_fish_d1024](lm_test_flops_abs_8_hard_fish_d1024.png)
 
-> lm_train_flops_abs_2_gfish_d1024
+> lm_train_flops_abs_8_hard_fish_d1024
 
-![lm_train_flops_abs_2_gfish_d1024](lm_train_flops_abs_2_gfish_d1024.png)
+![lm_train_flops_abs_8_hard_fish_d1024](lm_train_flops_abs_8_hard_fish_d1024.png)
 
-> lm_test_time_abs_2_gfish_d1024
+> lm_test_time_abs_8_hard_fish_d1024
 
-![lm_test_time_abs_2_gfish_d1024](lm_test_time_abs_2_gfish_d1024.png)
+![lm_test_time_abs_8_hard_fish_d1024](lm_test_time_abs_8_hard_fish_d1024.png)
 
-> lm_train_time_abs_2_gfish_d1024
+> lm_train_time_abs_8_hard_fish_d1024
 
-![lm_train_time_abs_2_gfish_d1024](lm_train_time_abs_2_gfish_d1024.png)
+![lm_train_time_abs_8_hard_fish_d1024](lm_train_time_abs_8_hard_fish_d1024.png)
 
 > lm_params_abs
 
