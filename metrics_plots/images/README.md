@@ -28,17 +28,17 @@
 
 > lm_ratio_params_2_gfish
 
-> lm_memory_ratio_2_gfish_test_only
+> lm_ratio_test_memory_2_gfish
 
-> lm_ratio_memory_2_gfish
+> lm_ratio_train_memory_2_gfish
 
 <p float="left" align="middle">
 
 <img src="lm_ratio_params_2_gfish.png" width="250" />
 
-<img src="lm_memory_ratio_2_gfish_test_only.png" width="250" />
+<img src="lm_ratio_test_memory_2_gfish.png" width="250" />
 
-<img src="lm_ratio_memory_2_gfish.png" width="250" />
+<img src="lm_ratio_train_memory_2_gfish.png" width="250" />
 
 </p>
 
