@@ -1,0 +1,12 @@
+Lm_ratio_test_flops_rbf2keys_softmax_len : x: sequence len, 5 lines for 5 model_dims
+Lm_ratio_train_flops_rbf2keys_softmax_len : x: sequence len, 5 lines for 5 model_dims
+Lm_ratio_test_flops_rbf2keyslinear_linear_len : x: sequence len, 5 lines for 5 model_dims
+Lm_ratio_train_flops_rbf2keyslinear_linear_len : x: sequence len, 5 lines for 5 model_dims
+
+Lm_ratio_test_flops_rbf2keys_softmax_model_dim : x: mdoel_dim, 1 line for 1024 len
+Lm_ratio_train_flops_rbf2keys_softmax_model_dim : x:model_dim, 1 line for 1024 len
+Lm_ratio_test_flops_rbf2keyslinear_linear_model_dim : x: model_dim, 1 line for 1024 len
+Lm_ratio_train_flops_rbf2keyslinear_linear_model_dim : x: model_dim, 1 line for 1024 len
+
+Lm_ratio_params_rbf2keys_softmax_model_dim: x:model_dim, 1 line for 1024 len
+Lm_ratio_params_rbf2keyslinear_linear_model_dim: x: model_dim, 1 line for 1024 len
