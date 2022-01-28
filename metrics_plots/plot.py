@@ -12,14 +12,46 @@ import plotly.graph_objects as go
 
 
 # %%
+fig_size = [800, 800]
+font = {
+    # 'axis': 32,
+    # 'tick': 30,
+    # 'legend': 16,
+    
+    'axis': 48,
+    'tick': 48,
+    # 'legend': 24,
+    'legend': 48,
+    
+}
+size = {
+    'line': 4,
+    'marker': 12,
+}
+fig_config = {
+    # 'legend_opacity': 0.5,
+    'legend_opacity': 1.0,
+}
+
+# %%
 # python -m pip install -U plotly kaleido nbformat pandas numpy
+GLOBAL_AXIS_TITLE = False
+GLOBAL_LEGEND = False
+GLOBAL_AXIS_TITLE = True
+GLOBAL_LEGEND = True
+
 GLOBAL_PLOT_TITLE = False
+
+GLOBAL_XAXIS_ANGLED = True
+
+
 GLOBAL_SHOW = False
 GLOBAL_SHOW_FINAL = False
 
 # %%
 # csv_fp = '/home/hai/vit_hdp_swin/metrics_plots/tam.csv'
 # csv_fp2 = '/home/hai/vit_hdp_swin/metrics_plots/tam2.csv'
+
 fp_csv_model = '/home/hai/vit_hdp_swin/metrics_plots/lm/model.csv'
 fp_csv_test = '/home/hai/vit_hdp_swin/metrics_plots/lm/test.csv'
 fp_csv_train = '/home/hai/vit_hdp_swin/metrics_plots/lm/train.csv'
@@ -189,21 +221,6 @@ df_comp = df_comp_model.append(df_comp_test, ignore_index=True)
 df_comp = df_comp.append(df_comp_train, ignore_index=True)
 df_comp
 
-# %%
-fig_size = [800, 800]
-font = {
-    'axis': 32,
-    'tick': 30,
-    'legend': 16,
-}
-size = {
-    'line': 4,
-    'marker': 12,
-}
-fig_config = {
-    'legend_opacity': 0.5,
-}
-
 
 # %%
 def format_fig(fig):
@@ -256,19 +273,34 @@ def format_fig(fig):
 
 def format_fig_flops(
             fig,
-            redo_axis_title=False,
             x_title='Sequence Length',
             y_title='Ratio',
             legend_title='Model Dim',
             corner='tr',
+            **kwargs,
+            ):
+    format_axis_legend(
+        fig,
+        x_title=x_title,
+        y_title=y_title,
+        legend_title=legend_title,
+        corner=corner,
+        **kwargs,
+    )
+    return fig
+
+def format_axis_legend(
+            fig,
+            x_title='Sequence Length',
+            y_title='Ratio',
+            legend_title='Model Dim',
+            corner='tr',
+            x_dtick=None,
+            y_dtick=None,
+            **kwargs,
             ):
     legend_margin = 0.02
     legend_pos_dict = {
-        # 'tr': dict(yanchor="top", xanchor="right", y=0.98, x=0.98),
-        # 'tl': dict(yanchor="top", xanchor="left", y=0.98, x=0.98),
-        # 'br': dict(yanchor="top", xanchor="right", y=0.98, x=0.98),
-        # 'bl': dict(yanchor="top", xanchor="left", y=0.98, x=0.98),
-        
         f'{_yk[0]}{_xk[0]}': dict(
             yanchor=_yk,
             xanchor=_xk,
@@ -282,10 +314,14 @@ def format_fig_flops(
     }
     assert corner in legend_pos_dict
     fig.update_layout(
-        xaxis=dict(title_text=x_title),
-        yaxis=dict(title_text=y_title),
+        xaxis=dict(
+            title_text=x_title if GLOBAL_AXIS_TITLE else '',
+            tickangle = 90 if GLOBAL_XAXIS_ANGLED else 0,
+            # dtick=None if x_dtick is None else x_dtick,
+        ),
+        yaxis=dict(title_text=y_title if GLOBAL_AXIS_TITLE else '', ),
         autosize=False,
-        # showlegend=False,
+        showlegend=GLOBAL_LEGEND,
         legend=dict(
             title_text=legend_title,
             
@@ -298,46 +334,21 @@ def format_fig_flops(
             
             font=dict(size=font['legend'],),
             # bgcolor='rgba(255, 255, 255, 0.75)',
-            bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
+            # bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
+            bgcolor=f"rgba(255, 255, 255, {fig_config['legend_opacity']})",
             # bordercolor="rgba(0, 0, 0, 0.25)",
             # borderwidth=3,
         ),
     )
+    if x_dtick is not None:
+        fig.update_xaxes(
+            dtick=x_dtick,
+        )
+    if y_dtick is not None:
+        fig.update_yaxes(
+            dtick=y_dtick,
+        )
 
-    # fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
-    
-    if redo_axis_title:
-        for axis in fig.layout:
-            # if type(fig.layout[axis]) in [go.layout.XAxis, go.layout.YAxis]:
-            if type(fig.layout[axis]) in [go.layout.XAxis]:
-                fig.layout[axis].title.text = ''
-        
-        axis_title_dict = dict(
-            font=dict(size=font['axis'],),
-            showarrow=False,
-            xref="paper",
-            yref="paper",
-        )
-        fig.update_layout(
-            # keep the original annotations and add a list of new annotations:
-            annotations = list(fig.layout.annotations) + 
-            [
-                go.layout.Annotation(
-                    x=0.5,
-                    y=-0.12,
-                    text="Sequence Length",
-                    **axis_title_dict
-                ),
-                # go.layout.Annotation(
-                #     x=-0.12,
-                #     y=0.5,
-                #     text="Ratio",
-                #     textangle=-90,
-                #     **axis_title_dict,
-                # ),
-            ]
-        )
-    
     return fig
 
 use_facet = False
@@ -351,6 +362,7 @@ use_facet = False
 group_prefix = 'lm_ratio'
 _methods = list(df_comp['method'].unique())
 metrics_ratio_len = ['test_flops', 'train_flops', 'test_time', 'train_time']
+metrics_ratio_len = ['test_flops', 'train_flops']
 figs_ratio_len = {}
 for _metric in metrics_ratio_len:
     for i, _method in enumerate(_methods):
@@ -394,6 +406,7 @@ for _metric in metrics_ratio_len:
             y_title=f"{'Train' if _training else 'Test'} {_y_sub[_metric.split('_')[-1]]}",
             legend_title='Model Dim',
             corner='tr' if _metric.endswith('flops') else 'br',
+            y_dtick=0.05,
         )
         figs_ratio_len[_name] = _fig
         print(f'created [{_name}]')
@@ -430,30 +443,36 @@ fig = px.line(
     # range_y=[0.92, 1.02],
     title=f'{"Params"} Ratio FiSH/softmax (lower is better)' if GLOBAL_PLOT_TITLE else '',
 )
-fig.update_layout(
-    xaxis=dict(title_text="Model Dim"),
-    yaxis=dict(title_text="Parameters Ratio"),
-    autosize=False,
-    # showlegend=False,
-    legend=dict(
-        title_text='',
-        
-        # orientation="h",
-        yanchor="bottom",
-        y=0.02,
-        xanchor="left",
-        x=0.02,
-        
-        # x=1,
-        # y=1,
-        font=dict(
-            size=font['legend'],
-            # color="black"
-        ),
-        bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
-    ),
-)
 format_fig(fig)
+format_axis_legend(
+    fig,
+    x_title="Model Dim",
+    y_title="Parameters Ratio",
+    y_dtick=0.05,
+)
+# fig.update_layout(
+#     xaxis=dict(title_text="Model Dim" if GLOBAL_AXIS_TITLE else ''),
+#     yaxis=dict(title_text="Parameters Ratio" if GLOBAL_AXIS_TITLE else ''),
+#     autosize=False,
+#     showlegend=False,
+#     legend=dict(
+#         title_text='',
+        
+#         # orientation="h",
+#         yanchor="bottom",
+#         y=0.02,
+#         xanchor="left",
+#         x=0.02,
+        
+#         # x=1,
+#         # y=1,
+#         font=dict(
+#             size=font['legend'],
+#             # color="black"
+#         ),
+#         bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
+#     ),
+# )
 figs_ratio_dim[_name] = fig
 print(f'created [{_name}]')
 # fig.show()
@@ -462,7 +481,10 @@ print(f'created [{_name}]')
 # %% RATIO PER DIM - memory train/test
 # figs_ratio_dim = {}
 # for includes_train in [False, True]:
-for _metric in ['test_memory', 'train_memory']:
+metrics = ['test_memory', 'train_memory']
+metrics = ['test_memory']
+
+for _metric in metrics:
     _training = _metric.startswith('train')
     _method = '2_gfish'
     _name = f'{group_prefix}_{_metric}_{_method}'
@@ -490,33 +512,14 @@ for _metric in ['test_memory', 'train_memory']:
         # range_y=[0.92, 1.02],
         title=f'{"Params"} Ratio FiSH/softmax (lower is better)' if GLOBAL_PLOT_TITLE else '',
     )
-    fig.update_layout(
-        xaxis=dict(title_text="Model Dim"),
-        yaxis=dict(title_text="Train Memory Ratio" if _training else "Test Memory Ratio"),
-        autosize=False,
-        showlegend=_training,
-        legend=dict(
-            title_text='',
-            
-            # orientation="h",
-            yanchor="bottom",
-            y=0.02,
-            xanchor="left",
-            x=0.02,
-            
-            # x=1,
-            # y=1,
-            font=dict(
-                size=font['legend'],
-                # color="black"
-            ),
-            # bgcolor='rgba(255, 255, 255, 0.75)',
-            bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
-            # bordercolor="rgba(0, 0, 0, 0.25)",
-            # borderwidth=3,
-        ),
-    )
     format_fig(fig)
+    format_axis_legend(
+        fig,
+        x_title="Model Dim",
+        y_title="Train Memory Ratio",
+        corner='bl',
+        y_dtick=0.05,
+    )
     figs_ratio_dim[_name] = fig
     print(f'created [{_name}]')
     # fig.show()
@@ -539,11 +542,8 @@ group_prefix = 'lm_abs'
 figs_abs_len = {}
 _d_model = 1024
 _log = True
-# metrics_abs_len = ['flops', 'flops_train', 'params', 'non_embed_params']
-metrics_abs_len = ['test_flops', 'train_flops', 'test_time', 'train_time']
-# metrics_abs_len = ['test_flops', 'train_flops', 'test_time', 'train_time', 'test_memory', 'train_memory']
-# metrics_abs_len = ['flops', 'test_time', 'test_memory']
-# metrics_abs_len = ['flops']
+# metrics_abs_len = ['test_flops', 'train_flops', 'test_time', 'train_time']
+metrics_abs_len = ['test_flops', 'train_flops']
 for _metric in metrics_abs_len:
     # for i, _method in enumerate(_methods):
     is_flops = _metric in ['test_flops', 'train_flops']
@@ -673,7 +673,8 @@ print(f'{_name}')
 # _fig
 
 # %%
-metrics_abs_dim = ['test_memory', 'train_memory']
+# metrics_abs_dim = ['test_memory', 'train_memory']
+metrics_abs_dim = ['test_memory']
 # param_keys = ['params', 'non_embed_params']
 for _metric in metrics_abs_dim:
     _name = f'{group_prefix}_{_metric}'
@@ -745,7 +746,8 @@ _method_name = 'gfish'
 # metrics_head_len = ['test_flops', 'train_flops']
 # metrics_head_len = ['test_time', 'train_time']
 # metrics_head_len = ['test_memory', 'train_memory']
-metrics_head_len = ['test_flops', 'train_flops', 'test_time', 'train_time']
+# metrics_head_len = ['test_flops', 'train_flops', 'test_time', 'train_time']
+metrics_head_len = ['test_flops', 'train_flops']
 # param_keys = ['params', 'non_embed_params']
 for _metric in metrics_head_len:
     _name = f'{group_prefix}_{_metric}_{_method_name}'
@@ -801,6 +803,7 @@ for _metric in metrics_head_len:
         y_title=f"{'Train' if _training else 'Test'} {_y_suf[_metric.split('_')[-1]]} Ratio",
         legend_title='Global Heads',
         corner='tl',
+        y_dtick=0.05,
     )
     figs_head_len[_name] = _fig
     print(f'created [{_name}]')
@@ -846,29 +849,38 @@ for _param in param_keys:
         # range_y=[0.92, 1.02],
         title=f'{"Params"} Ratio FiSH/softmax (lower is better)' if GLOBAL_PLOT_TITLE else '',
     )
-    fig.update_layout(
-        xaxis=dict(title_text="Model Dim"),
-        yaxis=dict(title_text="Parameters Ratio" if _param == 'params' else "Non-embedding Parameters Ratio"),
-        autosize=False,
-        # showlegend=False,
-        legend=dict(
-            title_text='Global Heads',
-            
-            # orientation="h",
-            yanchor="bottom",
-            y=0.02,
-            xanchor="left",
-            x=0.02,
-            
-            # x=1,
-            # y=1,
-            font=dict(
-                size=font['legend'],
-                # color="black"
-            ),
-            bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
-        ),
+    format_axis_legend(
+        fig,
+        x_title="Model Dim",
+        y_title=("Parameters Ratio" if _param == 'params' else "Non-embedding Parameters Ratio"),
+        corner='bl',
+        y_dtick=0.05,
     )
+    # fig.update_layout(
+    #     xaxis=dict(title_text="Model Dim" if GLOBAL_AXIS_TITLE else ''),
+    #     yaxis=dict(title_text=(
+    #         "Parameters Ratio" if _param == 'params' else "Non-embedding Parameters Ratio")
+    #         if GLOBAL_AXIS_TITLE else ''),
+    #     autosize=False,
+    #     # showlegend=False,
+    #     legend=dict(
+    #         title_text='Global Heads',
+            
+    #         # orientation="h",
+    #         yanchor="bottom",
+    #         y=0.02,
+    #         xanchor="left",
+    #         x=0.02,
+            
+    #         # x=1,
+    #         # y=1,
+    #         font=dict(
+    #             size=font['legend'],
+    #             # color="black"
+    #         ),
+    #         bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
+    #     ),
+    # )
     format_fig(fig)
     figs_head_dim[_name] = fig
     print(f'created [{_name}]')
@@ -879,6 +891,7 @@ for _param in param_keys:
 # %% HEAD RATIO PER DIM - memory
 _seq_len = 1024
 metrics = ['test_memory', 'train_memory']
+metrics = ['test_memory']
 
 for _metric in metrics:
     _name = f'{group_prefix}_{_metric}_l{_seq_len}_{_method_name}'
@@ -916,37 +929,46 @@ for _metric in metrics:
         'time': 'Time',
         'memory': 'Memory',
     }
-    fig.update_layout(
-        xaxis=dict(title_text="Model Dim"),
-        # yaxis=dict(title_text="Parameters Ratio" if _param == 'params' else "Non-embedding Parameters Ratio"),
-        yaxis=dict(title_text=f"{'Train' if _training else 'Test'} {_y_suf[_metric.split('_')[-1]]} Ratio"),
-        autosize=False,
-        # showlegend=False,
-        legend=dict(
-            title_text='Global Heads',
-            
-            # orientation="h",
-            yanchor="bottom",
-            y=0.02,
-            xanchor="left",
-            x=0.02,
-            
-            # x=1,
-            # y=1,
-            font=dict(
-                size=font['legend'],
-                # color="black"
-            ),
-            bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
-        ),
-    )
+    
     format_fig(fig)
+    format_axis_legend(
+        fig,
+        x_title="Model Dim",
+        y_title=(f"{'Train' if _training else 'Test'} {_y_suf[_metric.split('_')[-1]]} Ratio"),
+        corner='bl',
+        y_dtick=0.05,
+    )
+    # fig.update_layout(
+    #     xaxis=dict(title_text="Model Dim" if GLOBAL_AXIS_TITLE else ''),
+    #     # yaxis=dict(title_text="Parameters Ratio" if _param == 'params' else "Non-embedding Parameters Ratio"),
+    #     yaxis=dict(title_text=(f"{'Train' if _training else 'Test'} {_y_suf[_metric.split('_')[-1]]} Ratio")
+    #         if GLOBAL_AXIS_TITLE else ''),
+    #     autosize=False,
+    #     # showlegend=False,
+    #     legend=dict(
+    #         title_text='Global Heads',
+            
+    #         # orientation="h",
+    #         yanchor="bottom",
+    #         y=0.02,
+    #         xanchor="left",
+    #         x=0.02,
+            
+    #         # x=1,
+    #         # y=1,
+    #         font=dict(
+    #             size=font['legend'],
+    #             # color="black"
+    #         ),
+    #         bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
+    #     ),
+    # )
     # fig.show()
     figs_head_dim[_name] = fig
 
-for name, fig in figs_head_dim.items():
-    print(f'HEAD fig [{name}]')
-    # fig.show()
+# for name, fig in figs_head_dim.items():
+#     print(f'HEAD fig [{name}]')
+#     # fig.show()
 
 
 # %%
@@ -966,10 +988,15 @@ figs_all = {
     **figs_head_len,
     **figs_head_dim,
 }
+
+# GLOBAL_SHOW_FINAL = True
 for k, fig in figs_all.items():
     print(f'fig [{k}]')
     if GLOBAL_SHOW_FINAL:
         fig.show()
+
+
+
 
 # %%
 _dp = os.path.abspath('images')
@@ -1038,6 +1065,16 @@ readme_txt = '\n\n'.join(readme_lines)
 with open(fp_rm, 'w') as fo:
     fo.writelines(readme_txt)
 print(f'[PLOT] saved README.md at <{fp_rm}>')
+
+# %%
+import sys
+sys.exit()
+assert 0
+
+# %%
+for k, fig in figs_all.items():
+    print(f'fig [{k}]')
+    fig.show()
 
 # %%
 
