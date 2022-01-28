@@ -10,6 +10,7 @@ import time
 import random
 import argparse
 import datetime
+import json
 import numpy as np
 
 import torch
@@ -29,6 +30,7 @@ from utils import load_checkpoint, load_pretrained, save_checkpoint, get_grad_no
 
 import wandb
 import fvcore
+from fvcore.nn import FlopCountAnalysis
 import warnings
 warnings.filterwarnings('ignore', '.*interpolation*')
 
@@ -75,9 +77,11 @@ def parse_option():
     parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
     # parser.add_argument("--name", default='temp', type=str, help='name of the experiment')
     parser.add_argument("--wandb", default=1, type=int, help='whether to use wandb')
-    parser.add_argument("--flops_only", default=0, type=int, help='whether to calc flops and exit after')
-    parser.add_argument("--params_only", default=0, type=int, help='whether to calc params and exit after')
-
+    # parser.add_argument("--flops_only", default=0, type=int, help='whether to calc flops and exit after')
+    # parser.add_argument("--params_only", default=0, type=int, help='whether to calc params and exit after')
+    parser.add_argument("--metrics_path", default='', type=str, help='path to log metrics to and exit after')
+    parser.add_argument("--metrics_eval", default=0, type=str, help='whether to probe for eval only')
+    
     args, unparsed = parser.parse_known_args()
 
     config = get_config(args)
@@ -122,30 +126,56 @@ def main(config, args):
         logger.info(f"number of GFLOPs: {flops / 1e9}")
     
     
-    if args.flops_only:
-        from fvcore.nn import FlopCountAnalysis
-        _img_size = config.DATA.IMG_SIZE
-        _input = torch.tensor(
-            np.random.sample([1, 3, _img_size, _img_size]),
-            dtype=torch.float32,
-            device='cuda',
-        )
-        flops = FlopCountAnalysis(model, _input)
-        logger.info(f'fvcore GFLOPS: {flops.total() / 1e9}')
-        assert 0, '[DEBUG] flops'
+    # if args.flops_only:
+    #     from fvcore.nn import FlopCountAnalysis
+    #     _img_size = config.DATA.IMG_SIZE
+    #     _input = torch.tensor(
+    #         np.random.sample([1, 3, _img_size, _img_size]),
+    #         dtype=torch.float32,
+    #         device='cuda',
+    #     )
+    #     flops = FlopCountAnalysis(model, _input)
+    #     logger.info(f'fvcore GFLOPS: {flops.total() / 1e9}')
+    #     assert 0, '[DEBUG] flops'
     
-    # fvcore.nn.flop_count_table(
-    #     flops: fvcore.nn.flop_count.FlopCountAnalysis,
-    #     max_depth: int = 3,
-    #     activations: Optional[fvcore.nn.activation_count.ActivationCountAnalysis] = None,
-    #     show_param_shapes: bool = True
-    # )
+    # if args.params_only:
+    #     pc = model_without_ddp.count_params()
+    #     pc
+    #     logger.info(f"params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
+    #     assert 0, '[DEBUG] params'
     
-    if args.params_only:
-        pc = model_without_ddp.count_params()
-        pc
-        logger.info(f"params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
-        assert 0, '[DEBUG] params'
+    # if args.metrics_path:
+    #     assert args.metrics_path.endswith('.json')
+    #     if dist.get_rank() == 0:
+    #         _dp = os.path.split(args.metrics_path)[0]
+    #         if not os.path.isdir(_dp):
+    #             os.makedirs(_dp)
+    #         from fvcore.nn import FlopCountAnalysis
+    #         _img_size = config.DATA.IMG_SIZE
+    #         _input = torch.tensor(
+    #             np.random.sample([1, 3, _img_size, _img_size]),
+    #             dtype=torch.float32,
+    #             device='cuda',
+    #         )
+    #         flops = FlopCountAnalysis(model, _input)
+    #         logger.info(f'fvcore GFLOPS: {flops.total() / 1e9}')
+            
+    #         pc = model_without_ddp.count_params()
+    #         logger.info(f"params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
+    #         metrics = {
+    #             'gflops': flops.total() / 1e9,
+    #             'params': pc['total'],
+    #             'non_embed_params': pc['non_embed'],
+    #             'batch_size': config.DATA.BATCH_SIZE,
+    #         }
+    #         # _fp = os.path.join(args.metrics_path, f'{config.MODEL.NAME}.json')
+    #         _fp = args.metrics_path
+    #         with open(_fp, 'w') as fo:
+    #             json.dump(metrics, fo, indent=4)
+            
+    #         logger.info(f"metrics saved at <{_fp}>")
+    #     assert 0, '[DEBUG] metrics'
+        
     
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
@@ -186,24 +216,96 @@ def main(config, args):
     if config.THROUGHPUT_MODE:
         throughput(data_loader_val, model, logger)
         return
-
+    
+    # if args.metrics_eval:
+    #     time_start = time.time()
+    #     logger.info("Epoch[0] EVAL - STARTING")
+    #     telem = validate(config, data_loader_val, model, return_telemetry=True)
+    #     acc1 = telem['acc1']
+    #     acc5 = telem['acc5']
+    #     loss = telem['loss']
+    #     vram_gb = telem['vram_gb']
+    #     time_elapsed = time.time() - time_start
+    #     logger.info(f"Epoch[0] EVAL - took {time_elapsed:.2f}s and used {vram_gb:.4f}GB")
+    #     # assert 0
+        
+    
+    
     logger.info("Start training")
     start_time = time.time()
     for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
-
-        _stat = train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
+        _metrics_batches = {
+            'train': 40,
+            'val': 40,
+        }
+        
+        if args.metrics_path:
+            _stat_val = validate(config, data_loader_val, model, 
+                # metrics_batches=None,
+                metrics_batches=_metrics_batches['val'] if args.metrics_path else None,
+            )
+        
+        _stat_train = train_one_epoch(
+            config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler,
+            metrics_batches=_metrics_batches['train'] if args.metrics_path else None,
+        )
+        
+        if args.metrics_path:
+            assert args.metrics_path.endswith('.json')
+            if dist.get_rank() == 0:
+                _dp = os.path.split(args.metrics_path)[0]
+                if not os.path.isdir(_dp):
+                    os.makedirs(_dp)
+                _img_size = config.DATA.IMG_SIZE
+                _input = torch.tensor(
+                    np.random.sample([1, 3, _img_size, _img_size]),
+                    dtype=torch.float32,
+                    device='cuda',
+                )
+                flops = FlopCountAnalysis(model, _input)
+                logger.info(f'fvcore GFLOPS: {flops.total() / 1e9}')
+                
+                pc = model_without_ddp.count_params()
+                logger.info(f"params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
+                _stat_train['time_cost'] = _stat_train['time_cost'] / _metrics_batches['train'] / config.DATA.BATCH_SIZE
+                _stat_val['time_cost'] = _stat_val['time_cost'] / _metrics_batches['val'] / config.DATA.BATCH_SIZE
+                metrics = {
+                    'gflops': flops.total() / 1e9,
+                    'params': pc['total'],
+                    'non_embed_params': pc['non_embed'],
+                    'batch_size': config.DATA.BATCH_SIZE,
+                    'patch_size': config.MODEL.SWIN.PATCH_SIZE,
+                    'd_model': config.MODEL.SWIN.EMBED_DIM,
+                    'window_size': config.MODEL.SWIN.WINDOW_SIZE,
+                    'image_size': _img_size,
+                    'fish': config.MODEL.HDP.HDP,
+                    'train': {k: _stat_train[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
+                    'test': {k: _stat_val[k] for k in ['vram_gb', 'time_cost', 'time_cost_batch']},
+                }
+                # _fp = os.path.join(args.metrics_path, f'{config.MODEL.NAME}.json')
+                _fp = args.metrics_path
+                with open(_fp, 'w') as fo:
+                    json.dump(metrics, fo, indent=4)
+                
+                logger.info(f"metrics saved at <{_fp}>")
+            assert 0, '[DEBUG] metrics'
+        
         
         if is_rank0 and args.wandb:
             wandb_dict = {
-                'train_loss': float(_stat['loss']),
-                'train_mem_gb': float(_stat['vram_gb']),
+                'train_loss': float(_stat_train['loss']),
+                'train_mem_gb': float(_stat_train['vram_gb']),
             }
             wandb.log(wandb_dict)
             logger.info(f'[WandB]: {wandb_dict}')
         
         
         acc1, acc5, loss = validate(config, data_loader_val, model)
+        # _stat_val = validate(config, data_loader_val, model, 
+        #     metrics_batches=_metrics_batches['val'] if args.metrics_path else None,
+        # )
+        
         logger.info(f"Accuracy of the network on the {len(dataset_val)} test images: {acc1:.1f}%")
         is_best = acc1 > max_accuracy
         max_accuracy_new = max(max_accuracy, acc1)
@@ -235,7 +337,7 @@ def main(config, args):
         wandb.finish()
 
 
-def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
+def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler, metrics_batches=None):
     model.train()
     optimizer.zero_grad()
 
@@ -312,15 +414,23 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 f'loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t'
                 f'grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t'
                 f'mem {memory_used:.0f}MB')
+        
+        if metrics_batches is not None:
+            if idx >= metrics_batches - 1:
+                logger.info(f"[METRICS] stopped after {metrics_batches} batches")
+                break
+        
     epoch_time = time.time() - start
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
     return {
         'loss': float(loss_meter.avg),
         'vram_gb': float(memory_used / 1024.),
+        'time_cost': float(epoch_time),
+        'time_cost_batch': float(batch_time.avg),
     }
 
 @torch.no_grad()
-def validate(config, data_loader, model):
+def validate(config, data_loader, model, metrics_batches=None):
     criterion = torch.nn.CrossEntropyLoss()
     model.eval()
 
@@ -330,6 +440,8 @@ def validate(config, data_loader, model):
     acc5_meter = AverageMeter()
 
     end = time.time()
+    memory_used = 0.
+    _time_start = time.time()
     for idx, (images, target) in enumerate(data_loader):
         images = images.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
@@ -362,7 +474,23 @@ def validate(config, data_loader, model):
                 f'Acc@1 {acc1_meter.val:.3f} ({acc1_meter.avg:.3f})\t'
                 f'Acc@5 {acc5_meter.val:.3f} ({acc5_meter.avg:.3f})\t'
                 f'Mem {memory_used:.0f}MB')
+        
+        if metrics_batches is not None:
+            if idx >= metrics_batches - 1:
+                logger.info(f"[METRICS] stopped after {metrics_batches} batches")
+                break
+    
+    _time_elapsed = time.time() - _time_start
     logger.info(f' * Acc@1 {acc1_meter.avg:.3f} Acc@5 {acc5_meter.avg:.3f}')
+    if metrics_batches is not None:
+        return {
+            'acc1': acc1_meter.avg,
+            'acc5': acc5_meter.avg,
+            'loss': loss_meter.avg,
+            'vram_gb': memory_used / 1024.,
+            'time_cost': _time_elapsed,
+            'time_cost_batch': float(batch_time.avg),
+        }
     return acc1_meter.avg, acc5_meter.avg, loss_meter.avg
 
 
