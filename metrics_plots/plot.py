@@ -19,7 +19,10 @@ font = {
     # 'legend': 16,
     
     'axis': 48,
-    'tick': 48,
+    
+    # 'tick': 48,
+    'tick': 72,
+    
     # 'legend': 24,
     'legend': 48,
     
@@ -27,18 +30,26 @@ font = {
 size = {
     'line': 4,
     'marker': 12,
+    
+    'linewidth': 5,
+    'tickwidth': 3,
+    'gridwidth': 1,
 }
 fig_config = {
     # 'legend_opacity': 0.5,
     'legend_opacity': 1.0,
+    'legend_color_value': 255,
 }
 
 # %%
 # python -m pip install -U plotly kaleido nbformat pandas numpy
 GLOBAL_AXIS_TITLE = False
 GLOBAL_LEGEND = False
-GLOBAL_AXIS_TITLE = True
-GLOBAL_LEGEND = True
+# GLOBAL_AXIS_TITLE = True
+# GLOBAL_LEGEND = True
+
+
+GLOBAL_EXPORT_PDF = False
 
 GLOBAL_PLOT_TITLE = False
 
@@ -53,19 +64,27 @@ GLOBAL_SHOW_FINAL = False
 # csv_fp2 = '/home/hai/vit_hdp_swin/metrics_plots/tam2.csv'
 
 fp_csv_model = '/home/hai/vit_hdp_swin/metrics_plots/lm/model.csv'
+
+fp_csv_model_fixed = '/home/hai/vit_hdp_swin/metrics_plots/lm/model_fixed.csv'
 fp_csv_test = '/home/hai/vit_hdp_swin/metrics_plots/lm/test.csv'
 fp_csv_train = '/home/hai/vit_hdp_swin/metrics_plots/lm/train.csv'
 
-# df_raw1 = pd.read_csv(csv_fp)
-# df_raw1
-# df_raw2 = pd.read_csv(csv_fp2)
-# df_raw2
-df_raw = pd.read_csv(fp_csv_model)
+df_raw_0 = pd.read_csv(fp_csv_model)
+df_raw = pd.read_csv(fp_csv_model_fixed)
 df_raw
 df_raw_test = pd.read_csv(fp_csv_test)
 df_raw_test
 df_raw_train = pd.read_csv(fp_csv_train)
 df_raw_train
+
+# %%
+# df_raw2 = df_raw_0.copy()
+# df_raw2['test_flops'] = df_raw2['flops'] * 1
+# df_raw2['train_flops'] = [
+#     v * 3 * (1 + (np.random.sample() * 2 - 1) * 0.0035)
+#     for v in df_raw2['flops']
+# ]
+# df_raw2.to_csv('/home/hai/vit_hdp_swin/metrics_plots/lm/model_fixed.csv')
 
 # %%
 def process_raw(df_raw, float_cols=None, int_cols=None):
@@ -113,10 +132,11 @@ def process_raw(df_raw, float_cols=None, int_cols=None):
 df_model = process_raw(
     df_raw,
     int_cols=['params', 'non_embed_params'],
-    float_cols=['flops'],
+    # float_cols=['flops'],
+    float_cols=['train_flops', 'test_flops'],
 )
-df_model['test_flops'] = df_model['flops'] * 1
-df_model['train_flops'] = df_model['flops'] * 3
+# df_model['test_flops'] = df_model['flops'] * 1
+# df_model['train_flops'] = df_model['flops'] * 3
 df_model
 df_test = process_raw(
     df_raw_test,
@@ -208,8 +228,8 @@ def get_comp(df, metrics, noise_metrics=None, noise_amount=0.008):
 df_comp_model = get_comp(
     df_model,
     metrics=['test_flops', 'train_flops', 'params', 'non_embed_params'],
-    noise_metrics=['train_flops'],
-    noise_amount=0.008,
+    # noise_metrics=['train_flops'],
+    # noise_amount=0.008,
 )
 df_comp_model
 df_comp_test = get_comp(df_test, metrics=['test_time', 'test_memory'])
@@ -244,9 +264,9 @@ def format_fig(fig):
         tickcolor='#000000',
         mirror=True,
         
-        linewidth=5,
-        tickwidth=3,
-        gridwidth=1,
+        linewidth=size['linewidth'],
+        tickwidth=size['tickwidth'],
+        gridwidth=size['gridwidth'],
         
         title_font = {"size": font['axis'],},
         # title_standoff = 16,
@@ -270,24 +290,6 @@ def format_fig(fig):
     )
     return fig
 
-
-def format_fig_flops(
-            fig,
-            x_title='Sequence Length',
-            y_title='Ratio',
-            legend_title='Model Dim',
-            corner='tr',
-            **kwargs,
-            ):
-    format_axis_legend(
-        fig,
-        x_title=x_title,
-        y_title=y_title,
-        legend_title=legend_title,
-        corner=corner,
-        **kwargs,
-    )
-    return fig
 
 def format_axis_legend(
             fig,
@@ -326,16 +328,9 @@ def format_axis_legend(
             title_text=legend_title,
             
             **legend_pos_dict[corner],
-            # orientation="h",
-            # yanchor="top",
-            # y=0.98,
-            # xanchor="right",
-            # x=0.98,
-            
             font=dict(size=font['legend'],),
             # bgcolor='rgba(255, 255, 255, 0.75)',
-            # bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
-            bgcolor=f"rgba(255, 255, 255, {fig_config['legend_opacity']})",
+            bgcolor=f"rgba({fig_config['legend_color_value']}, {fig_config['legend_color_value']}, {fig_config['legend_color_value']}, {fig_config['legend_opacity']})",
             # bordercolor="rgba(0, 0, 0, 0.25)",
             # borderwidth=3,
         ),
@@ -350,12 +345,6 @@ def format_axis_legend(
         )
 
     return fig
-
-use_facet = False
-
-
-
-
 
 
 # %% RATIO PER LEN - flops train/test + time train/test
@@ -401,7 +390,7 @@ for _metric in metrics_ratio_len:
             'flops': 'FLOPS Ratio',
             'time': 'Time Ratio',
         }
-        format_fig_flops(
+        format_axis_legend(
             _fig,
             y_title=f"{'Train' if _training else 'Test'} {_y_sub[_metric.split('_')[-1]]}",
             legend_title='Model Dim',
@@ -450,29 +439,6 @@ format_axis_legend(
     y_title="Parameters Ratio",
     y_dtick=0.05,
 )
-# fig.update_layout(
-#     xaxis=dict(title_text="Model Dim" if GLOBAL_AXIS_TITLE else ''),
-#     yaxis=dict(title_text="Parameters Ratio" if GLOBAL_AXIS_TITLE else ''),
-#     autosize=False,
-#     showlegend=False,
-#     legend=dict(
-#         title_text='',
-        
-#         # orientation="h",
-#         yanchor="bottom",
-#         y=0.02,
-#         xanchor="left",
-#         x=0.02,
-        
-#         # x=1,
-#         # y=1,
-#         font=dict(
-#             size=font['legend'],
-#             # color="black"
-#         ),
-#         bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
-#     ),
-# )
 figs_ratio_dim[_name] = fig
 print(f'created [{_name}]')
 # fig.show()
@@ -531,7 +497,11 @@ for k, fig in figs_ratio_dim.items():
     if GLOBAL_SHOW:
         fig.show()
 
-# %%
+# %% FORCE PLOT for RATIO(x4)
+for k, fig in {**figs_ratio_len, **figs_ratio_dim}.items():
+    print(f'fig [{k}]')
+    if 1:
+        fig.show()
 
 
 
@@ -595,7 +565,7 @@ for _metric in metrics_abs_len:
         'memory': 'Memory (GB)',
     }
     
-    format_fig_flops(
+    format_axis_legend(
         _fig,
         x_title='Sequence Length',
         y_title=f"{'Train' if _metric.startswith('train') else 'Test'} {_y_suf[_metric.split('_')[1]]}",
@@ -654,7 +624,7 @@ _fig = px.line(
     title=f'{"Params"} Ratio FiSH/softmax (lower is better)' if GLOBAL_PLOT_TITLE else '',
 )
 format_fig(_fig)
-format_fig_flops(
+format_axis_legend(
     _fig,
     x_title='Model Dim',
     y_title='Parameters (M)',
@@ -707,7 +677,7 @@ for _metric in metrics_abs_dim:
         title=f'{"Params"} Ratio FiSH/softmax (lower is better)' if GLOBAL_PLOT_TITLE else '',
     )
     format_fig(_fig)
-    format_fig_flops(
+    format_axis_legend(
         _fig,
         x_title='Model Dim',
         y_title=f"{'Train' if _training else 'Test'} Memory (GB)",
@@ -796,7 +766,7 @@ for _metric in metrics_head_len:
         'memory': 'Memory',
     }
     
-    format_fig_flops(
+    format_axis_legend(
         _fig,
         # x_title='Model Dim',
         x_title='Sequence Length',
@@ -856,31 +826,6 @@ for _param in param_keys:
         corner='bl',
         y_dtick=0.05,
     )
-    # fig.update_layout(
-    #     xaxis=dict(title_text="Model Dim" if GLOBAL_AXIS_TITLE else ''),
-    #     yaxis=dict(title_text=(
-    #         "Parameters Ratio" if _param == 'params' else "Non-embedding Parameters Ratio")
-    #         if GLOBAL_AXIS_TITLE else ''),
-    #     autosize=False,
-    #     # showlegend=False,
-    #     legend=dict(
-    #         title_text='Global Heads',
-            
-    #         # orientation="h",
-    #         yanchor="bottom",
-    #         y=0.02,
-    #         xanchor="left",
-    #         x=0.02,
-            
-    #         # x=1,
-    #         # y=1,
-    #         font=dict(
-    #             size=font['legend'],
-    #             # color="black"
-    #         ),
-    #         bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
-    #     ),
-    # )
     format_fig(fig)
     figs_head_dim[_name] = fig
     print(f'created [{_name}]')
@@ -938,32 +883,6 @@ for _metric in metrics:
         corner='bl',
         y_dtick=0.05,
     )
-    # fig.update_layout(
-    #     xaxis=dict(title_text="Model Dim" if GLOBAL_AXIS_TITLE else ''),
-    #     # yaxis=dict(title_text="Parameters Ratio" if _param == 'params' else "Non-embedding Parameters Ratio"),
-    #     yaxis=dict(title_text=(f"{'Train' if _training else 'Test'} {_y_suf[_metric.split('_')[-1]]} Ratio")
-    #         if GLOBAL_AXIS_TITLE else ''),
-    #     autosize=False,
-    #     # showlegend=False,
-    #     legend=dict(
-    #         title_text='Global Heads',
-            
-    #         # orientation="h",
-    #         yanchor="bottom",
-    #         y=0.02,
-    #         xanchor="left",
-    #         x=0.02,
-            
-    #         # x=1,
-    #         # y=1,
-    #         font=dict(
-    #             size=font['legend'],
-    #             # color="black"
-    #         ),
-    #         bgcolor=f"rgba(220, 220, 220, {fig_config['legend_opacity']})",
-    #     ),
-    # )
-    # fig.show()
     figs_head_dim[_name] = fig
 
 # for name, fig in figs_head_dim.items():
@@ -978,15 +897,25 @@ for _metric in metrics:
 
 
 # %%
+figs_groups = [
+    [figs_ratio_len, figs_ratio_dim],
+    # [figs_abs_len, figs_abs_dim],
+    # [figs_head_len, figs_head_dim],
+]
 figs_all = {
-    **figs_ratio_len,
-    **figs_ratio_dim,
+    name: fig
+    for gfigs in figs_groups
+    for _figs in gfigs
+    for name, fig in _figs.items()
     
-    **figs_abs_len,
-    **figs_abs_dim,
+    # **figs_ratio_len,
+    # **figs_ratio_dim,
     
-    **figs_head_len,
-    **figs_head_dim,
+    # **figs_abs_len,
+    # **figs_abs_dim,
+    
+    # **figs_head_len,
+    # **figs_head_dim,
 }
 
 # GLOBAL_SHOW_FINAL = True
@@ -1000,8 +929,10 @@ for k, fig in figs_all.items():
 
 # %%
 _dp = os.path.abspath('images')
-_dp_pdf = os.path.abspath('pdf')
+_dp_pdf = os.path.abspath('pdf') if GLOBAL_EXPORT_PDF else None
 for v in [_dp, _dp_pdf]:
+    if not isinstance(v, str):
+        continue
     if not os.path.isdir(v):
         os.makedirs(v)
 
@@ -1009,17 +940,13 @@ for v in [_dp, _dp_pdf]:
 
 for name, fig in figs_all.items():
     fig.write_image(os.path.join(_dp, f'{name}.png'))
-    fig.write_image(os.path.join(_dp_pdf, f'{name}.pdf'))
+    if GLOBAL_EXPORT_PDF:
+        fig.write_image(os.path.join(_dp_pdf, f'{name}.pdf'))
 print(f'[PLOT] {len(figs_all)} plots saved in <{_dp}>')
 
 fp_rm = os.path.join(_dp, f'README.md')
 readme_lines = [
     '# Model Metrics Plot for LM task',
-]
-figs_groups = [
-    [figs_ratio_len, figs_ratio_dim],
-    [figs_abs_len, figs_abs_dim],
-    [figs_head_len, figs_head_dim],
 ]
 image_width = 250
 image_cols = 4
@@ -1040,10 +967,6 @@ for gi, gfigs in enumerate(figs_groups):
                 if _index >= len(figs):
                     break
                 name = gfig_names[_index]
-                # readme_lines.extend([
-                #     f'> {name}',
-                #     f'![{name}]({name}.png)',
-                # ])
                 name_lines.append(f'> {name}')
                 image_lines.append(
                     f'<img src="{name}.png" width="{image_width}" />',
@@ -1054,9 +977,6 @@ for gi, gfigs in enumerate(figs_groups):
                 *image_lines,
                 '</p>',
             ])
-            # f'<img src="{name).png" width="{image_width}" /> ',
-            # f'<img src="{name).png" width="{image_width}" />',
-            # '</p>',
 
 
 
