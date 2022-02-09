@@ -74,7 +74,7 @@ def parse_option():
     parser.add_argument('--throughput', action='store_true', help='Test throughput only')
 
     # distributed training
-    parser.add_argument("--local_rank", type=int, required=False, help='local rank for DistributedDataParallel')
+    parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
     # parser.add_argument("--name", default='temp', type=str, help='name of the experiment')
     parser.add_argument("--wandb", default=1, type=int, help='whether to use wandb')
     # parser.add_argument("--flops_only", default=0, type=int, help='whether to calc flops and exit after')

@@ -23,20 +23,21 @@ pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp
 ## Experiments
 > A: swin_tiny_patch4_window7_224 | non-hdp baseline
 ```
-python -m torch.distributed.launch --nproc_per_node=4 --use_env  --master_port 12345 \
+python -m torch.distributed.launch --nproc_per_node=4  --master_port 12345 \
     main.py \
-    --data-path /host/ubuntu/data/imagenet2012 \
+    --batch-size 128 --accumulation-steps 2 \
     --cfg configs/swin_tiny_patch4_window7_224.yaml \
-
+    --data-path /host/ubuntu/data/imagenet2012
 
 ```
 
 > B: swin_tiny_patch4_window7_224_hdp2qk | hdp HALF heads for qk
 ```
-python -m torch.distributed.launch --nproc_per_node=4 --use_env  --master_port 12345 \
+python -m torch.distributed.launch --nproc_per_node=4 --master_port 12345 \
     main.py \
-    --data-path /host/ubuntu/data/imagenet2012 \
+    --batch-size 128 --accumulation-steps 2 \
     --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_nonlinear.yaml \
+    --data-path /host/ubuntu/data/imagenet2012
 
 
 ```
