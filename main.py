@@ -65,7 +65,7 @@ def parse_option():
     parser.add_argument('--accumulation-steps', type=int, help="gradient accumulation steps")
     parser.add_argument('--use-checkpoint', action='store_true',
                         help="whether to use gradient checkpointing to save memory")
-    parser.add_argument('--amp-opt-level', type=str, default='O1', choices=['O0', 'O1', 'O2'],
+    parser.add_argument('--amp-opt-level', type=str, default='O0', choices=['O0', 'O1', 'O2'],
                         help='mixed precision opt level, if O0, no amp is used')
     parser.add_argument('--output', default='output', type=str, metavar='PATH',
                         help='root of output folder, the full path is <output>/<model_name>/<tag> (default: output)')
@@ -74,13 +74,13 @@ def parse_option():
     parser.add_argument('--throughput', action='store_true', help='Test throughput only')
 
     # distributed training
-    parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
+    parser.add_argument("--local_rank", type=int, required=False, help='local rank for DistributedDataParallel')
     # parser.add_argument("--name", default='temp', type=str, help='name of the experiment')
     parser.add_argument("--wandb", default=1, type=int, help='whether to use wandb')
     # parser.add_argument("--flops_only", default=0, type=int, help='whether to calc flops and exit after')
     # parser.add_argument("--params_only", default=0, type=int, help='whether to calc params and exit after')
     parser.add_argument("--metrics_path", default='', type=str, help='path to log metrics to and exit after')
-    parser.add_argument("--metrics_eval", default=0, type=str, help='whether to probe for eval only')
+    # parser.add_argument("--metrics_eval", default=0, type=str, help='whether to probe for eval only')
     
     args, unparsed = parser.parse_known_args()
 
@@ -125,58 +125,6 @@ def main(config, args):
         flops = model_without_ddp.flops()
         logger.info(f"number of GFLOPs: {flops / 1e9}")
     
-    
-    # if args.flops_only:
-    #     from fvcore.nn import FlopCountAnalysis
-    #     _img_size = config.DATA.IMG_SIZE
-    #     _input = torch.tensor(
-    #         np.random.sample([1, 3, _img_size, _img_size]),
-    #         dtype=torch.float32,
-    #         device='cuda',
-    #     )
-    #     flops = FlopCountAnalysis(model, _input)
-    #     logger.info(f'fvcore GFLOPS: {flops.total() / 1e9}')
-    #     assert 0, '[DEBUG] flops'
-    
-    # if args.params_only:
-    #     pc = model_without_ddp.count_params()
-    #     pc
-    #     logger.info(f"params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
-    #     assert 0, '[DEBUG] params'
-    
-    # if args.metrics_path:
-    #     assert args.metrics_path.endswith('.json')
-    #     if dist.get_rank() == 0:
-    #         _dp = os.path.split(args.metrics_path)[0]
-    #         if not os.path.isdir(_dp):
-    #             os.makedirs(_dp)
-    #         from fvcore.nn import FlopCountAnalysis
-    #         _img_size = config.DATA.IMG_SIZE
-    #         _input = torch.tensor(
-    #             np.random.sample([1, 3, _img_size, _img_size]),
-    #             dtype=torch.float32,
-    #             device='cuda',
-    #         )
-    #         flops = FlopCountAnalysis(model, _input)
-    #         logger.info(f'fvcore GFLOPS: {flops.total() / 1e9}')
-            
-    #         pc = model_without_ddp.count_params()
-    #         logger.info(f"params: total[{pc['total']}] non_embed[{pc['non_embed']}]")
-    #         metrics = {
-    #             'gflops': flops.total() / 1e9,
-    #             'params': pc['total'],
-    #             'non_embed_params': pc['non_embed'],
-    #             'batch_size': config.DATA.BATCH_SIZE,
-    #         }
-    #         # _fp = os.path.join(args.metrics_path, f'{config.MODEL.NAME}.json')
-    #         _fp = args.metrics_path
-    #         with open(_fp, 'w') as fo:
-    #             json.dump(metrics, fo, indent=4)
-            
-    #         logger.info(f"metrics saved at <{_fp}>")
-    #     assert 0, '[DEBUG] metrics'
-        
-    
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
     if config.AUG.MIXUP > 0.:
@@ -216,20 +164,6 @@ def main(config, args):
     if config.THROUGHPUT_MODE:
         throughput(data_loader_val, model, logger)
         return
-    
-    # if args.metrics_eval:
-    #     time_start = time.time()
-    #     logger.info("Epoch[0] EVAL - STARTING")
-    #     telem = validate(config, data_loader_val, model, return_telemetry=True)
-    #     acc1 = telem['acc1']
-    #     acc5 = telem['acc5']
-    #     loss = telem['loss']
-    #     vram_gb = telem['vram_gb']
-    #     time_elapsed = time.time() - time_start
-    #     logger.info(f"Epoch[0] EVAL - took {time_elapsed:.2f}s and used {vram_gb:.4f}GB")
-    #     # assert 0
-        
-    
     
     logger.info("Start training")
     start_time = time.time()

@@ -182,3 +182,16 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1
     --wandb 0 --params_only 1 \
 
 ```
+
+## EVAL mem + time
+
+``` bash
+# > single A: swin_tiny_patch4_window7_224 | non-hdp
+python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1236 \
+    main.py --local_rank 0 \
+    --data-path /host/ubuntu/data/imagenet2012 \
+    --cfg configs/swin_tiny_patch4_window7_224.yaml \
+    --batch-size 2 --amp-opt-level O0 \
+    --wandb 0 --metrics 1 --eval \
+
+```
