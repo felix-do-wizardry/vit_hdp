@@ -24,7 +24,7 @@ pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp
 > A: swin_tiny_patch4_window7_224 | non-hdp baseline
 ```
 python -m torch.distributed.launch --nproc_per_node=4 --use_env  --master_port 12345 \
-    main.py --local_rank 0 \
+    main.py \
     --data-path /host/ubuntu/data/imagenet2012 \
     --cfg configs/swin_tiny_patch4_window7_224.yaml \
 
@@ -34,7 +34,7 @@ python -m torch.distributed.launch --nproc_per_node=4 --use_env  --master_port 1
 > B: swin_tiny_patch4_window7_224_hdp2qk | hdp HALF heads for qk
 ```
 python -m torch.distributed.launch --nproc_per_node=4 --use_env  --master_port 12345 \
-    main.py --local_rank 0 \
+    main.py \
     --data-path /host/ubuntu/data/imagenet2012 \
     --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_nonlinear.yaml \
 
@@ -47,7 +47,7 @@ add `--amp-opt-level O0` to disable mixed-precision training
 > single A: swin_tiny_patch4_window7_224 | non-hdp
 ```
 python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1234 \
-    main.py --local_rank 0 \
+    main.py \
     --data-path /host/ubuntu/data/imagenet2012 \
     --cfg configs/swin_tiny_patch4_window7_224.yaml \
     --batch-size 128 --amp-opt-level O0 \
@@ -58,7 +58,7 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1
 > single B: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear, ONLY last 2 stages
 ```
 python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1234 \
-    main.py --local_rank 0 \
+    main.py \
     --data-path /host/ubuntu/data/imagenet2012 \
     --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_s23_nonlinear.yaml \
     --batch-size 128 --amp-opt-level O0 \
@@ -69,7 +69,7 @@ python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1
 > single C: swin_tiny_patch4_window7_224 | hdp HALF qk non-linear
 ```
 python -m torch.distributed.launch --nproc_per_node=1 --use_env  --master_port 1234 \
-    main.py --local_rank 0 \
+    main.py \
     --data-path /host/ubuntu/data/imagenet2012 \
     --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_nonlinear.yaml \
     --batch-size 128 --amp-opt-level O0 \
