@@ -21,6 +21,8 @@ pip install -v --disable-pip-version-check --no-cache-dir --global-option="--cpp
 
 
 ## Experiments
+(to run with 8 gpus, use `--nproc_per_node=8` and delete `--accumulation-steps 2`)
+(batch-size * num-gpus * accumulation-steps should be 1024)
 > A: swin_tiny_patch4_window7_224 | non-hdp baseline with 4 gpus
 ```
 python -m torch.distributed.launch --nproc_per_node=4 --master_port 12345 main.py \
@@ -29,16 +31,23 @@ python -m torch.distributed.launch --nproc_per_node=4 --master_port 12345 main.p
     --data-path /host/ubuntu/data/imagenet2012
 ```
 
-> B: swin_tiny_patch4_window7_224_hdp2qk | hdp HALF heads for qk with 4 gpus
+> B: swin_tiny_patch4_window7_224_hdp2qk_s23_nln | hdp HALF heads on 2 final stages for qk with 4 gpus
+```
+python -m torch.distributed.launch --nproc_per_node=4 --master_port 12345 main.py \
+    --batch-size 128 --accumulation-steps 2 \
+    --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_s23_nonlinear.yaml \
+    --data-path /host/ubuntu/data/imagenet2012
+```
+
+> C: swin_tiny_patch4_window7_224_hdp2qk | hdp HALF heads for qk with 4 gpus
 ```
 python -m torch.distributed.launch --nproc_per_node=4 --master_port 12345 main.py \
     --batch-size 128 --accumulation-steps 2 \
     --cfg configs/swin_tiny_patch4_window7_224_hdp2qk_nonlinear.yaml \
     --data-path /host/ubuntu/data/imagenet2012
 ```
-(to run with 8 gpus, use `--nproc_per_node=8` and delete `--accumulation-steps 2`)
 
-## Other
+## Other (DEBUG ONLY)
 add `--amp-opt-level O0` to disable mixed-precision training
 > single-gpu A: swin_tiny_patch4_window7_224 | non-hdp
 ```
